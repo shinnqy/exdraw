@@ -1,5 +1,5 @@
 {
-  "name": "excalidraw-lib",
+  "name": "exdraw",
   "version": "0.1.0",
   "description": "用参数调用 Excalidraw 基础绘图能力，生成 .excalidraw 文件，无需手写冗长 JSON",
   "type": "module",

@@ -1,5 +1,5 @@
 /**
- * excalidraw-lib 公开 API
+ * exdraw 公开 API
  */
 export { Drawing } from "./Drawing.js";
 export {

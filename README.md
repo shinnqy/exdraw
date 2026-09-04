@@ -1,4 +1,4 @@
-# excalidraw-lib
+# exdraw
 
 每个基础绘图操作都是一条 CLI 命令。指定位置和样式，结果追加写入同一个 `.excalidraw` 文件。
 
