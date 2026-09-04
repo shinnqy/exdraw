@@ -176,13 +176,28 @@ describe("serialize() / deserialize()", () => {
     assert.equal(restored[1].text, "测试");
   });
 
-  test("分数索引应被赋值", () => {
-    const elements = [rectangle(), ellipse()];
-    const json = serialize(elements);
-    const { elements: restored } = deserialize(json);
-    assert.ok(restored[0].index !== null);
-    assert.ok(restored[1].index !== null);
-    assert.notEqual(restored[0].index, restored[1].index);
+  test("不写入 index，避免 VS Code 扩展因非法 fractional index 加载失败", () => {
+    const elements = Array.from({ length: 120 }, (_, i) => rectangle({ x: i * 10 }));
+    const parsed = JSON.parse(serialize(elements));
+    assert.equal(parsed.elements.length, 120);
+    assert.ok(parsed.elements.every((el) => !Object.prototype.hasOwnProperty.call(el, "index")));
+  });
+
+  test("已有非法 index 再序列化会被去掉", () => {
+    const parsed = JSON.parse(serialize([
+      { ...rectangle({ x: 0, y: 0 }), index: "a10" },
+      { ...rectangle({ x: 20, y: 0 }), index: "b1" },
+    ]));
+    assert.ok(parsed.elements.every((el) => !Object.prototype.hasOwnProperty.call(el, "index")));
+  });
+
+  test("line 默认不写入 polygon；polygon:true 才写出", () => {
+    const plain = JSON.parse(serialize([line({ x: 0, y: 0, width: 40 })]));
+    assert.ok(!Object.prototype.hasOwnProperty.call(plain.elements[0], "polygon"));
+    const closed = JSON.parse(serialize([
+      line({ points: [[0, 0], [40, 0], [20, 30]], polygon: true }),
+    ]));
+    assert.equal(closed.elements[0].polygon, true);
   });
 });
 

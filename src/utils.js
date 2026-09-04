@@ -1,5 +1,5 @@
 /**
- * 工具函数：ID 生成、随机数、分数索引等
+ * 工具函数：ID 生成、随机数、时间戳
  */
 import { randomBytes } from "node:crypto";
 
@@ -24,34 +24,6 @@ export function randomId(size = 21) {
  */
 export function randomInteger() {
   return Math.floor(Math.random() * 2 ** 31);
-}
-
-// ── 分数索引（fractional index）────────────────────────────────────────────────
-/**
- * 为有序元素列表生成简单的分数索引字符串序列
- * 格式：a1、a2、a3 … a9、b1、b2 …（与 rocicorp/fractional-indexing 一致）
- * @param {number} count - 需要的索引数量
- * @param {string} [after=""] - 起始位置（空串表示从头开始）
- */
-export function generateFractionalIndices(count, after = "") {
-  const indices = [];
-  const letters = "abcdefghijklmnopqrstuvwxyz";
-  let letterIdx = after ? letters.indexOf(after[0]) : 0;
-  let num = after ? parseInt(after.slice(1) || "0", 10) + 1 : 1;
-
-  for (let i = 0; i < count; i++) {
-    if (num > 999) {
-      letterIdx++;
-      num = 1;
-    }
-    if (letterIdx >= letters.length) {
-      // 超出范围时 fallback 到更长的前缀
-      letterIdx = 0;
-    }
-    indices.push(`${letters[letterIdx]}${String(num).padStart(1, "0")}`);
-    num++;
-  }
-  return indices;
 }
 
 // ── 杂项 ─────────────────────────────────────────────────────────────────────

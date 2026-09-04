@@ -113,7 +113,9 @@ describe("CLI 绘图命令", () => {
     const data = JSON.parse(await readFile(file, "utf8"));
     assert.ok(data.elements.some((e) => e.type === "ellipse" && e.width === 60 && e.height === 60));
     assert.ok(data.elements.some((e) => e.type === "diamond"));
-    assert.ok(data.elements.some((e) => e.type === "line" && e.polygon === false));
+    const ln = data.elements.find((e) => e.type === "line");
+    assert.ok(ln);
+    assert.ok(!Object.prototype.hasOwnProperty.call(ln, "polygon"));
   });
 
   test("arrow --from/--to 绑定已有形状", async () => {
