@@ -22,6 +22,35 @@ async function tmpFile() {
 }
 
 describe("CLI 绘图命令", () => {
+  test("--help 列出全部子命令、能力与必填参数", async () => {
+    const io = captureIo();
+    await runCli(["--help"], io);
+    const out = io.out;
+    for (const name of [
+      "new", "text", "rect", "square", "diamond", "oval", "circle",
+      "line", "arrow", "freedraw", "image", "frame", "embed", "group",
+      "background", "inspect",
+    ]) {
+      assert.match(out, new RegExp(`\\n  ${name}\\n`));
+      assert.match(out, new RegExp(`${name}[\\s\\S]*?能力:`));
+      assert.match(out, new RegExp(`${name}[\\s\\S]*?必填:`));
+      assert.match(out, new RegExp(`${name}[\\s\\S]*?参数:`));
+    }
+    assert.match(out, /--text <s>/);
+    assert.match(out, /--from <id> --to <id>/);
+    assert.match(out, /--src <path>/);
+    assert.match(out, /--r, --radius <n>/);
+    assert.match(out, /笔迹点列/);
+  });
+
+  test("text --help 含必填项与通用样式参数", async () => {
+    const io = captureIo();
+    await runCli(["text", "--help"], io);
+    assert.match(io.out, /能力: 写文字/);
+    assert.match(io.out, /必填:.*--text/);
+    assert.match(io.out, /--font-size/);
+    assert.match(io.out, /--stroke, --color/);
+  });
   test("缺少 -f 时报错", async () => {
     await assert.rejects(
       () => runCli(["text", "--text", "hi"], { stdout: { write() {} }, stderr: { write() {} } }),
