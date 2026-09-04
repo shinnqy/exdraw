@@ -94,6 +94,19 @@ export const ARROWHEAD = {
   arrow: "arrow",
   bar: "bar",
   circle: "circle",
+  circle_outline: "circle_outline",
   triangle: "triangle",
+  triangle_outline: "triangle_outline",
   diamond: "diamond",
+  diamond_outline: "diamond_outline",
+};
+
+export const IMAGE_MIME = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
 };

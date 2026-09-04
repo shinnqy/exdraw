@@ -74,4 +74,48 @@ describe("CLI 绘图命令", () => {
     await runCli(["inspect", file], inspectIo);
     assert.match(inspectIo.out, /元素数: 1/);
   });
+
+  test("circle / diamond / line 都可直接调用", async () => {
+    const file = await tmpFile();
+    const io = captureIo();
+    await runCli(["circle", "-f", file, "--cx", "80", "--cy", "80", "--r", "30", "--label", "DB"], io);
+    await runCli(["diamond", "-f", file, "--x", "200", "--y", "40", "--width", "120", "--height", "80", "判断"], io);
+    await runCli(["line", "-f", file, "--points", "0,0;80,0", "--sharp"], io);
+    const data = JSON.parse(await readFile(file, "utf8"));
+    assert.ok(data.elements.some((e) => e.type === "ellipse" && e.width === 60 && e.height === 60));
+    assert.ok(data.elements.some((e) => e.type === "diamond"));
+    assert.ok(data.elements.some((e) => e.type === "line" && e.polygon === false));
+  });
+
+  test("arrow --from/--to 绑定已有形状", async () => {
+    const file = await tmpFile();
+    const io = captureIo();
+    await runCli(["rect", "-f", file, "--id", "a", "--x", "0", "--y", "0", "--width", "80", "--height", "40"], io);
+    await runCli(["rect", "-f", file, "--id", "b", "--x", "200", "--y", "0", "--width", "80", "--height", "40"], io);
+    await runCli(["arrow", "-f", file, "--from", "a", "--to", "b", "--label", "HTTP"], io);
+    const data = JSON.parse(await readFile(file, "utf8"));
+    const ar = data.elements.find((e) => e.type === "arrow");
+    assert.equal(ar.startBinding.elementId, "a");
+    assert.equal(ar.endBinding.elementId, "b");
+  });
+
+  test("image 写入 files", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    const file = await tmpFile();
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    const src = join(dirname(file), "p.png");
+    await writeFile(src, png);
+    const io = captureIo();
+    await runCli(["image", "-f", file, "--src", src, "--x", "0", "--y", "0"], io);
+    const data = JSON.parse(await readFile(file, "utf8"));
+    const img = data.elements.find((e) => e.type === "image");
+    assert.ok(img);
+    assert.equal(img.status, "saved");
+    assert.ok(data.files[img.fileId]);
+    assert.match(data.files[img.fileId].dataURL, /^data:image\/png;base64,/);
+  });
 });

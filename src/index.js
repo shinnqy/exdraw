@@ -2,7 +2,20 @@
  * excalidraw-lib 公开 API
  */
 export { Drawing } from "./Drawing.js";
-export { rectangle, ellipse, diamond, text, line, arrow, frame } from "./elements.js";
+export {
+  rectangle,
+  square,
+  ellipse,
+  circle,
+  diamond,
+  text,
+  line,
+  arrow,
+  frame,
+  freedraw,
+  image,
+  embeddable,
+} from "./elements.js";
 export { serialize, deserialize } from "./serialize.js";
 export {
   FONT_FAMILY,

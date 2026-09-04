@@ -1,8 +1,12 @@
 /**
- * 元素工厂模块
- * 每个函数接收精简参数，自动填充所有 Excalidraw 必填字段（id、seed、version 等）
- * 返回的对象可以直接放入 .excalidraw 文件的 elements 数组
+ * 元素工厂：按官方 Excalidraw element schema 补全必填字段
+ * 参考：
+ *   https://docs.excalidraw.com/docs/codebase/json-schema
+ *   packages/element/src/types.ts
  */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import {
   DEFAULT_ELEMENT_PROPS,
   DEFAULT_FONT_FAMILY,
@@ -10,17 +14,38 @@ import {
   DEFAULT_TEXT_ALIGN,
   DEFAULT_VERTICAL_ALIGN,
   ROUNDNESS,
+  IMAGE_MIME,
 } from "./constants.js";
 import { randomId, randomInteger, getUpdatedTimestamp } from "./utils.js";
+import { measureText } from "./text-metrics.js";
 
-// ── 基础构造函数 ───────────────────────────────────────────────────────────────
+function resolveAngle(opts) {
+  if (opts.angleDeg != null) return (Number(opts.angleDeg) * Math.PI) / 180;
+  return opts.angle ?? 0;
+}
+
+function resolveRoundness(type, opts) {
+  if (opts.roundness && typeof opts.roundness === "object") return opts.roundness;
+  if (opts.sharp) return null;
+  if (opts.rounded === false) return null;
+  if (type === "rectangle") {
+    return opts.rounded === false ? null : { type: ROUNDNESS.ADAPTIVE_RADIUS };
+  }
+  if (type === "diamond" || type === "ellipse") {
+    return { type: ROUNDNESS.PROPORTIONAL_RADIUS };
+  }
+  if (type === "line" || type === "arrow") {
+    return opts.rounded ? { type: ROUNDNESS.PROPORTIONAL_RADIUS } : null;
+  }
+  return null;
+}
+
 function baseElement(type, opts) {
   const {
     x = 0,
     y = 0,
     width = 100,
     height = 100,
-    angle = 0,
     strokeColor = DEFAULT_ELEMENT_PROPS.strokeColor,
     backgroundColor = DEFAULT_ELEMENT_PROPS.backgroundColor,
     fillStyle = DEFAULT_ELEMENT_PROPS.fillStyle,
@@ -30,7 +55,6 @@ function baseElement(type, opts) {
     opacity = DEFAULT_ELEMENT_PROPS.opacity,
     groupIds = [],
     frameId = null,
-    roundness = null,
     boundElements = null,
     link = null,
     locked = DEFAULT_ELEMENT_PROPS.locked,
@@ -47,7 +71,7 @@ function baseElement(type, opts) {
     y,
     width,
     height,
-    angle,
+    angle: resolveAngle(opts),
     strokeColor,
     backgroundColor,
     fillStyle,
@@ -57,8 +81,8 @@ function baseElement(type, opts) {
     opacity,
     groupIds,
     frameId,
-    index: null,       // 由序列化层统一赋值
-    roundness,
+    index: null,
+    roundness: resolveRoundness(type, opts),
     seed,
     version,
     versionNonce,
@@ -70,39 +94,63 @@ function baseElement(type, opts) {
   };
 }
 
-// ── 形状 ───────────────────────────────────────────────────────────────────────
+function withLinearOrigin(opts) {
+  const next = { ...opts };
+  if (Array.isArray(next.points?.[0])) {
+    const [px, py] = next.points[0];
+    if (!Object.prototype.hasOwnProperty.call(next, "x")) next.x = px;
+    if (!Object.prototype.hasOwnProperty.call(next, "y")) next.y = py;
+  }
+  return next;
+}
+
+function buildPoints(opts) {
+  const { points, width } = opts;
+  if (points) {
+    if (Array.isArray(points[0])) {
+      const ox = points[0][0];
+      const oy = points[0][1];
+      return points.map(([px, py]) => [px - ox, py - oy]);
+    }
+    return points;
+  }
+  return [[0, 0], [width ?? 200, 0]];
+}
+
+function bboxOfPoints(pts) {
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return {
+    width: Math.max(...xs) - Math.min(...xs) || 0,
+    height: Math.max(...ys) - Math.min(...ys) || 0,
+  };
+}
+
+function normalizeLabel(labelOpts) {
+  if (!labelOpts) return null;
+  return typeof labelOpts === "string" ? { text: labelOpts } : labelOpts;
+}
 
 /**
- * 矩形
- * @param {object} opts
- * @param {number} opts.x
- * @param {number} opts.y
- * @param {number} [opts.width=100]
- * @param {number} [opts.height=100]
- * @param {string} [opts.strokeColor]
- * @param {string} [opts.backgroundColor]
- * @param {string} [opts.fillStyle]  "solid"|"hachure"|"cross-hatch"|"zigzag"
- * @param {number} [opts.strokeWidth]
- * @param {string} [opts.strokeStyle]  "solid"|"dashed"|"dotted"
- * @param {number} [opts.roughness]  0|1|2
- * @param {number} [opts.opacity]  0-100
- * @param {boolean} [opts.rounded=false]  是否圆角
- * @param {object} [opts.label]  { text, fontSize, strokeColor, textAlign }
+ * 矩形。官方 UI 默认圆角（roundness.type = 3）；--sharp 取消圆角
  */
 export function rectangle(opts = {}) {
   const el = baseElement("rectangle", {
     width: 100,
     height: 100,
     ...opts,
-    roundness: opts.rounded
-      ? { type: ROUNDNESS.ADAPTIVE_RADIUS }
-      : (opts.roundness ?? null),
   });
   return _withLabel(el, opts.label);
 }
 
+/** 正方形 */
+export function square(opts = {}) {
+  const size = opts.size ?? opts.width ?? opts.height ?? 100;
+  return rectangle({ ...opts, width: size, height: size });
+}
+
 /**
- * 椭圆
+ * 椭圆。参考图与官方新元素默认 roundness.type = 2
  */
 export function ellipse(opts = {}) {
   const el = baseElement("ellipse", { width: 100, height: 100, ...opts });
@@ -110,27 +158,24 @@ export function ellipse(opts = {}) {
 }
 
 /**
- * 菱形
+ * 圆（等宽高椭圆）
+ * --r / --radius / --diameter，或 --cx --cy 表示圆心
  */
+export function circle(opts = {}) {
+  const radius = opts.radius ?? opts.r ?? (opts.diameter != null ? opts.diameter / 2 : null);
+  const size = radius != null ? radius * 2 : (opts.width ?? opts.height ?? 120);
+  const next = { ...opts, width: size, height: size };
+  if (opts.cx != null) next.x = opts.cx - size / 2;
+  if (opts.cy != null) next.y = opts.cy - size / 2;
+  return ellipse(next);
+}
+
+/** 菱形。参考图默认 roundness.type = 2 */
 export function diamond(opts = {}) {
   const el = baseElement("diamond", { width: 100, height: 100, ...opts });
   return _withLabel(el, opts.label);
 }
 
-// ── 文本 ───────────────────────────────────────────────────────────────────────
-
-/**
- * 文本元素
- * @param {object} opts
- * @param {string} opts.text
- * @param {number} opts.x
- * @param {number} opts.y
- * @param {number} [opts.fontSize=20]
- * @param {number} [opts.fontFamily]  使用 FONT_FAMILY 常量
- * @param {string} [opts.textAlign]   "left"|"center"|"right"
- * @param {string} [opts.verticalAlign] "top"|"middle"|"bottom"
- * @param {string} [opts.strokeColor]
- */
 export function text(opts = {}) {
   const {
     text: content = "",
@@ -144,16 +189,13 @@ export function text(opts = {}) {
     ...rest
   } = opts;
 
-  // 简单按字符估算宽高，用于布局参考（Excalidraw 打开后会重新计算）
-  const charsPerLine = content.split("\n").reduce((m, l) => Math.max(m, l.length), 0) || 1;
-  const lines = content.split("\n").length;
-  const estWidth = charsPerLine * fontSize * 0.6;
-  const estHeight = lines * fontSize * lineHeight;
+  const { width: estWidth, height: estHeight } = measureText(content, { fontSize, lineHeight });
 
   const base = baseElement("text", {
     width: estWidth,
     height: estHeight,
     roughness: 0,
+    sharp: true,
     ...rest,
   });
 
@@ -171,89 +213,41 @@ export function text(opts = {}) {
   };
 }
 
-// ── 线条 & 箭头 ────────────────────────────────────────────────────────────────
-
 /**
- * 构造 points 数组
- * 支持两种写法：
- *  1. points: [[x1,y1],[x2,y2],...]   绝对坐标 → 会转为相对第一个点的偏移
- *  2. points: [{dx,dy},{dx,dy}]        相对第一个点的增量，最终转为 [0,0] 出发
- */
-/**
- * 若只给了绝对坐标 points、没给 x/y，则把第一个点当作元素原点。
- */
-function withLinearOrigin(opts) {
-  const next = { ...opts };
-  if (Array.isArray(next.points?.[0])) {
-    const [px, py] = next.points[0];
-    if (!Object.prototype.hasOwnProperty.call(next, "x")) next.x = px;
-    if (!Object.prototype.hasOwnProperty.call(next, "y")) next.y = py;
-  }
-  return next;
-}
-
-function buildPoints(opts) {
-  const { points, width } = opts;
-
-  if (points) {
-    // 用户传入绝对坐标数组，转换为 Excalidraw 的元素本地坐标
-    // （Excalidraw 的 points 是相对于元素 x,y 的偏移量）
-    if (Array.isArray(points[0])) {
-      const ox = points[0][0];
-      const oy = points[0][1];
-      return points.map(([px, py]) => [px - ox, py - oy]);
-    }
-    return points;
-  }
-
-  // 默认：水平线，长度 = width || 200
-  const len = width ?? 200;
-  return [[0, 0], [len, 0]];
-}
-
-/**
- * 直线
- * @param {object} opts
- * @param {number} opts.x
- * @param {number} opts.y
- * @param {number[][]} [opts.points]  点坐标数组（绝对坐标，自动转换）
- * @param {number} [opts.width=200]   若无 points 则决定默认线段长度
+ * 直线 / 折线。schema 需要 points、lastCommittedPoint、bindings、arrowheads、polygon
  */
 export function line(opts = {}) {
   opts = withLinearOrigin(opts);
-  const pts = buildPoints(opts);
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]);
-  const w = Math.max(...xs) - Math.min(...xs) || 0;
-  const h = Math.max(...ys) - Math.min(...ys) || 0;
-
+  let pts = buildPoints(opts);
+  const polygon = Boolean(opts.polygon);
+  if (polygon && pts.length >= 2) {
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      pts = [...pts, [first[0], first[1]]];
+    }
+  }
+  const { width, height } = bboxOfPoints(pts);
   const base = baseElement("line", {
-    width: w,
-    height: h,
     ...opts,
-    roundness: null,
+    width,
+    height,
   });
 
   return {
     ...base,
     points: pts,
-    startBinding: null,
-    endBinding: null,
-    startArrowhead: null,
-    endArrowhead: null,
+    lastCommittedPoint: null,
+    startBinding: opts.startBinding ?? null,
+    endBinding: opts.endBinding ?? null,
+    startArrowhead: opts.startArrowhead ?? null,
+    endArrowhead: opts.endArrowhead ?? null,
+    polygon,
   };
 }
 
 /**
- * 箭头
- * @param {object} opts
- * @param {number} opts.x
- * @param {number} opts.y
- * @param {number[][]} [opts.points]
- * @param {number} [opts.width=200]
- * @param {string|null} [opts.startArrowhead=null]  "arrow"|"bar"|"circle"|"triangle"|"diamond"|null
- * @param {string|null} [opts.endArrowhead="arrow"]
- * @param {string} [opts.label]       箭头标签文字
+ * 箭头。schema 需要 elbowed；折线箭头再带 fixedSegments / startIsSpecial / endIsSpecial
  */
 export function arrow(opts = {}) {
   opts = withLinearOrigin(opts);
@@ -261,66 +255,146 @@ export function arrow(opts = {}) {
     startArrowhead = null,
     endArrowhead = "arrow",
     label: labelOpts,
-    ...rest
+    startBinding = null,
+    endBinding = null,
   } = opts;
-
-  const pts = buildPoints(rest);
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]);
-  const w = Math.max(...xs) - Math.min(...xs) || 0;
-  const h = Math.max(...ys) - Math.min(...ys) || 0;
-
+  const elbowed = Boolean(opts.elbowed ?? opts.elbow);
+  const pts = buildPoints(opts);
+  const { width, height } = bboxOfPoints(pts);
   const base = baseElement("arrow", {
-    width: w,
-    height: h,
-    ...rest,
-    roundness: null,
+    ...opts,
+    width,
+    height,
+    rounded: elbowed ? false : opts.rounded !== false && !opts.sharp,
+    sharp: elbowed || opts.sharp,
   });
 
   const el = {
     ...base,
     points: pts,
-    startBinding: null,
-    endBinding: null,
+    lastCommittedPoint: null,
+    startBinding,
+    endBinding,
     startArrowhead,
     endArrowhead,
-    elbowed: false,
+    elbowed,
   };
+
+  if (elbowed) {
+    el.fixedSegments = opts.fixedSegments ?? null;
+    el.startIsSpecial = opts.startIsSpecial ?? false;
+    el.endIsSpecial = opts.endIsSpecial ?? false;
+  }
 
   return _withLabel(el, labelOpts);
 }
 
-// ── 帧（Frame）───────────────────────────────────────────────────────────────
-
-/**
- * 帧容器（可包含多个其他元素）
- * @param {object} opts
- * @param {string[]} opts.children  子元素 ID 列表
- * @param {string}  [opts.name]
- */
 export function frame(opts = {}) {
-  const { children = [], name = null, ...rest } = opts;
+  const { name = null, ...rest } = opts;
   const base = baseElement("frame", {
     width: 400,
     height: 300,
-    ...rest,
     strokeColor: "#bbb",
     fillStyle: "solid",
     roughness: 0,
-    roundness: null,
+    ...rest,
+    sharp: true,
   });
   return { ...base, name };
-  // children 的 frameId 由 Drawing 层设置
 }
 
-// ── 内部：为形状添加标签文字 ──────────────────────────────────────────────────
+/**
+ * 手绘。schema：points / pressures / simulatePressure
+ */
+export function freedraw(opts = {}) {
+  opts = withLinearOrigin(opts);
+  const pts = buildPoints({ ...opts, width: opts.width ?? 0 });
+  const { width, height } = bboxOfPoints(pts);
+  const base = baseElement("freedraw", {
+    ...opts,
+    width,
+    height,
+    sharp: true,
+  });
+  return {
+    ...base,
+    points: pts,
+    pressures: opts.pressures ?? pts.map(() => 0.5),
+    simulatePressure: opts.simulatePressure !== false,
+    strokeOptions: opts.strokeOptions ?? {
+      variability: "variable",
+      streamline: 0.5,
+    },
+  };
+}
+
+function readPngSize(buf) {
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  return null;
+}
 
 /**
- * 给形状元素附加一个文本标签（containerId 绑定）
- * 返回 [shapeElement, textElement]（顺序：形状在前）
+ * 图片。返回 { element, file }，file 写入文档的 files 表
  */
+export function image(opts = {}) {
+  let { fileId, dataURL, mimeType, width, height, src } = opts;
+  let file = null;
+
+  if (src) {
+    const buf = readFileSync(src);
+    mimeType = mimeType ?? IMAGE_MIME[extname(src).toLowerCase()] ?? "image/png";
+    fileId = fileId ?? createHash("sha1").update(buf).digest("hex");
+    dataURL = `data:${mimeType};base64,${buf.toString("base64")}`;
+    const png = readPngSize(buf);
+    if (png) {
+      width = width ?? png.width;
+      height = height ?? png.height;
+    }
+    file = {
+      mimeType,
+      id: fileId,
+      dataURL,
+      created: Date.now(),
+      lastRetrieved: Date.now(),
+    };
+  }
+
+  const base = baseElement("image", {
+    width: width ?? 200,
+    height: height ?? 200,
+    ...opts,
+    sharp: true,
+  });
+
+  const element = {
+    ...base,
+    fileId: fileId ?? null,
+    status: opts.status ?? (fileId ? "saved" : "pending"),
+    scale: opts.scale ?? [1, 1],
+    crop: opts.crop ?? null,
+  };
+
+  return { element, file };
+}
+
+/**
+ * 嵌入网页（embeddable）
+ */
+export function embeddable(opts = {}) {
+  const base = baseElement("embeddable", {
+    width: 400,
+    height: 300,
+    ...opts,
+    sharp: true,
+  });
+  return { ...base, link: opts.link ?? opts.url ?? null };
+}
+
 function _withLabel(shapeEl, labelOpts) {
-  if (!labelOpts) return shapeEl;
+  const label = normalizeLabel(labelOpts);
+  if (!label) return shapeEl;
 
   const {
     text: content = "",
@@ -328,21 +402,28 @@ function _withLabel(shapeEl, labelOpts) {
     fontFamily = DEFAULT_FONT_FAMILY,
     textAlign = "center",
     verticalAlign = "middle",
-    strokeColor = DEFAULT_ELEMENT_PROPS.strokeColor,
-  } = typeof labelOpts === "string" ? { text: labelOpts } : labelOpts;
+    strokeColor = shapeEl.strokeColor ?? DEFAULT_ELEMENT_PROPS.strokeColor,
+  } = label;
 
-  const lines = content.split("\n").length;
-  const charsPerLine = content.split("\n").reduce((m, l) => Math.max(m, l.length), 0) || 1;
-  const estWidth = charsPerLine * fontSize * 0.6;
-  const estHeight = lines * fontSize * 1.25;
+  const { width: estWidth, height: estHeight } = measureText(content, { fontSize, lineHeight: 1.25 });
+
+  let tx = shapeEl.x + shapeEl.width / 2 - estWidth / 2;
+  let ty = shapeEl.y + shapeEl.height / 2 - estHeight / 2;
+  if ((shapeEl.type === "arrow" || shapeEl.type === "line") && Array.isArray(shapeEl.points)) {
+    const first = shapeEl.points[0];
+    const last = shapeEl.points[shapeEl.points.length - 1];
+    tx = shapeEl.x + (first[0] + last[0]) / 2 - estWidth / 2;
+    ty = shapeEl.y + (first[1] + last[1]) / 2 - estHeight / 2;
+  }
 
   const textEl = {
     ...baseElement("text", {
-      x: shapeEl.x + shapeEl.width / 2 - estWidth / 2,
-      y: shapeEl.y + shapeEl.height / 2 - estHeight / 2,
+      x: tx,
+      y: ty,
       width: estWidth,
       height: estHeight,
       roughness: 0,
+      sharp: true,
       strokeColor,
     }),
     text: content,
@@ -356,7 +437,6 @@ function _withLabel(shapeEl, labelOpts) {
     lineHeight: 1.25,
   };
 
-  // 让形状知道自己绑定了文字
   const updatedShape = {
     ...shapeEl,
     boundElements: [
@@ -366,4 +446,9 @@ function _withLabel(shapeEl, labelOpts) {
   };
 
   return [updatedShape, textEl];
+}
+
+export function flattenCreated(created) {
+  if (created && created.element) return [created.element];
+  return Array.isArray(created) ? created : [created];
 }

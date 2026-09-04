@@ -1,10 +1,5 @@
 /**
- * CLI：每个绘图原语对应一条子命令，结果追加写入同一个 .excalidraw 文件
- *
- *   node bin/exdraw.js new  -f test.excalidraw
- *   node bin/exdraw.js text -f test.excalidraw --x 100 --y 20 --text "标题"
- *   node bin/exdraw.js rect -f test.excalidraw --x 100 --y 80 --width 200 --label Browser
- *   node bin/exdraw.js arrow -f test.excalidraw --points 200,130;200,200 --label HTTP
+ * CLI：每个基础绘图操作对应一条子命令，追加写入同一个 .excalidraw
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -12,7 +7,8 @@ import { resolve } from "node:path";
 import { Drawing } from "./Drawing.js";
 import { serialize, deserialize } from "./serialize.js";
 import {
-  rectangle, ellipse, diamond, text, line, arrow, frame,
+  rectangle, square, ellipse, circle, diamond, text, line, arrow,
+  frame, freedraw, image, embeddable,
 } from "./elements.js";
 import {
   FONT_FAMILY, COLOR_PALETTE, FILL_STYLE, STROKE_STYLE,
@@ -21,10 +17,6 @@ import {
 import { parseArgv, coerce } from "./parse-args.js";
 
 export class CliError extends Error {
-  /**
-   * @param {string} message
-   * @param {number} [exitCode=1]
-   */
   constructor(message, exitCode = 1) {
     super(message);
     this.exitCode = exitCode;
@@ -45,13 +37,32 @@ const STYLE_FIELDS = {
   opacity: "number",
   id: "string",
   angle: "number",
+  link: "string",
+  locked: "boolean",
+  frameId: "string",
+  rounded: "boolean",
+  sharp: "boolean",
+  label: "string",
+  labelColor: "string",
+  labelSize: "number",
+  labelAlign: "string",
 };
 
-const TEXT_STYLE_FIELDS = {
+const TEXT_FIELDS = {
   fontSize: "number",
   fontFamily: "string",
   textAlign: "string",
   verticalAlign: "string",
+};
+
+const CONNECTOR_FIELDS = {
+  points: "points",
+  from: "string",
+  to: "string",
+  fromSide: "string",
+  toSide: "string",
+  startArrowhead: "string",
+  endArrowhead: "string",
 };
 
 const FLAG_ALIASES = {
@@ -64,26 +75,33 @@ const FLAG_ALIASES = {
   height: "height",
   file: "file",
   output: "file",
+  r: "radius",
+  url: "link",
 };
 
 const COMMON_DRAW_FLAGS = `
     -f, --file <path>          要写入的 .excalidraw 文件（必填，不存在则创建）
-    --x <n>                    左上角 x
-    --y <n>                    左上角 y
+    --x <n> --y <n>            左上角坐标
     --width, --w <n>           宽度
     --height <n>               高度
     --stroke, --color <c>      描边颜色
     --fill, --bg <c>           填充颜色
-    --stroke-width <n>         描边宽度 1/2/4
+    --stroke-width <n>         1 / 2 / 4
     --stroke-style <s>         solid | dashed | dotted
     --fill-style <s>           solid | hachure | cross-hatch | zigzag
     --roughness <n>            0 | 1 | 2
     --opacity <n>              0-100
-    --id <id>                  自定义元素 id
-    -q, --quiet                少打印
+    --angle <deg>              旋转角度（度）
+    --id <id>                  自定义元素 id（供箭头 --from/--to 使用）
+    --link <url>               超链接
+    --locked                   锁定
+    --frame-id <id>            放入已有 frame
+    --label <s>                框内 / 箭头文字
+    --label-color --label-size --label-align
+    --rounded / --sharp        圆角或直角
+    -q, --quiet
 `;
 
-/** @type {Record<string, object>} */
 const COMMANDS = {
   new: {
     kind: "meta",
@@ -94,7 +112,6 @@ const COMMANDS = {
     kind: "draw",
     method: "background",
     positional: "color",
-    required: ["color"],
     fields: { color: "string" },
     summary: "设置画布背景色",
     usage: "exdraw background -f <file> --color \"#f8f9fa\"",
@@ -105,12 +122,12 @@ const COMMANDS = {
     method: "text",
     positional: "text",
     required: ["text"],
-    fields: { ...STYLE_FIELDS, ...TEXT_STYLE_FIELDS, text: "string" },
+    fields: { ...STYLE_FIELDS, ...TEXT_FIELDS, text: "string" },
     summary: "写文字",
     usage: "exdraw text -f <file> --x 100 --y 20 --text \"标题\"",
-    extraHelp: `    --text <s>                文字内容（也可写成位置参数）
+    extraHelp: `    --text <s>                文字（也可写成位置参数）
     --font-size <n>            字号，默认 20
-    --font-family <s>          Excalifont | Nunito | "Comic Shanns" | 数字
+    --font-family <s>          Excalifont | Nunito | "Comic Shanns"
     --text-align <s>           left | center | right
     --vertical-align <s>       top | middle | bottom`,
   },
@@ -119,56 +136,99 @@ const COMMANDS = {
     method: "rect",
     aliases: ["rectangle"],
     positional: "label",
-    fields: { ...STYLE_FIELDS, rounded: "boolean", label: "string" },
-    summary: "画矩形",
-    usage: "exdraw rect -f <file> --x 100 --y 80 --width 200 --height 50 --label Browser --rounded",
-    extraHelp: `    --label <s>               框内文字（也可写成位置参数）
-    --rounded                 圆角矩形`,
+    fields: { ...STYLE_FIELDS },
+    summary: "画矩形（默认圆角，与官方 UI 一致）",
+    usage: "exdraw rect -f <file> --x 100 --y 80 --width 200 --height 50 --label Browser",
+    extraHelp: "    --sharp                   直角矩形（默认圆角）",
+  },
+  square: {
+    kind: "draw",
+    method: "square",
+    positional: "label",
+    fields: { ...STYLE_FIELDS, size: "number" },
+    summary: "画正方形",
+    usage: "exdraw square -f <file> --x 100 --y 80 --size 120 --label Box",
+    extraHelp: "    --size <n>                边长（也可用 --width）",
+  },
+  diamond: {
+    kind: "draw",
+    method: "diamond",
+    positional: "label",
+    fields: { ...STYLE_FIELDS },
+    summary: "画菱形",
+    usage: "exdraw diamond -f <file> --x 100 --y 80 --width 200 --height 90 --label \"条件？\"",
   },
   oval: {
     kind: "draw",
     method: "oval",
     aliases: ["ellipse"],
     positional: "label",
-    fields: { ...STYLE_FIELDS, label: "string" },
+    fields: { ...STYLE_FIELDS },
     summary: "画椭圆",
     usage: "exdraw oval -f <file> --x 100 --y 80 --width 160 --height 70 --label Node",
-    extraHelp: "    --label <s>               框内文字（也可写成位置参数）",
   },
-  diamond: {
+  circle: {
     kind: "draw",
-    method: "diamond",
+    method: "circle",
     positional: "label",
-    fields: { ...STYLE_FIELDS, label: "string" },
-    summary: "画菱形",
-    usage: "exdraw diamond -f <file> --x 100 --y 80 --width 200 --height 90 --label \"条件？\"",
-    extraHelp: "    --label <s>               框内文字（也可写成位置参数）",
+    fields: {
+      ...STYLE_FIELDS,
+      radius: "number",
+      diameter: "number",
+      cx: "number",
+      cy: "number",
+    },
+    summary: "画圆",
+    usage: "exdraw circle -f <file> --cx 200 --cy 200 --r 60 --label Start",
+    extraHelp: `    --r, --radius <n>         半径
+    --diameter <n>            直径
+    --cx --cy                 圆心（也可用 --x --y 表示左上角）`,
   },
   line: {
     kind: "draw",
     method: "line",
-    fields: { ...STYLE_FIELDS, points: "points" },
+    fields: { ...STYLE_FIELDS, ...CONNECTOR_FIELDS, polygon: "boolean" },
     summary: "画直线 / 折线",
     usage: "exdraw line -f <file> --points \"100,280;300,280;300,320\"",
-    extraHelp: "    --points <s>              点列，如 \"0,0;100,50\" 或 \"[[0,0],[100,50]]\"",
+    extraHelp: `    --points <s>              点列，必须加引号："0,0;100,50"
+    --rounded                 曲线
+    --polygon                 闭合多边形
+    --from / --to <id>        绑到已有形状`,
   },
   arrow: {
     kind: "draw",
     method: "arrow",
     positional: "label",
-    fields: {
-      ...STYLE_FIELDS,
-      points: "points",
-      startArrowhead: "string",
-      endArrowhead: "string",
-      label: "string",
-    },
-    summary: "画箭头",
-    usage: "exdraw arrow -f <file> --points \"200,130;200,200\" --label HTTP",
+    fields: { ...STYLE_FIELDS, ...CONNECTOR_FIELDS, elbow: "boolean", elbowed: "boolean" },
+    summary: "画箭头（可绑到形状）",
+    usage: "exdraw arrow -f <file> --from browser --to web --label HTTP",
     extraHelp: `    --points <s>              点列，如 "0,0;0,80"
-    --label <s>               箭头文字（也可写成位置参数）
+    --from / --to <id>        绑到已有形状的 id
+    --from-side / --to-side   left | right | top | bottom | center
+    --elbow                   直角折线箭头（K8s/架构图常用）
     --start-arrowhead <s>     none | arrow | bar | circle | triangle | diamond
-    --end-arrowhead <s>       默认 arrow`,
+    --end-arrowhead <s>       默认 arrow
+    --sharp                   直线箭头（默认略带弧度）`,
+  },
+  freedraw: {
+    kind: "draw",
+    method: "freedraw",
+    aliases: ["draw"],
+    required: ["points"],
+    fields: { ...STYLE_FIELDS, points: "points" },
+    summary: "手绘笔迹",
+    usage: "exdraw freedraw -f <file> --points \"0,0;8,4;20,10;36,6\"",
+    extraHelp: "    --points <s>              笔迹点列（必填）",
+  },
+  image: {
+    kind: "draw",
+    method: "image",
+    aliases: ["img"],
+    required: ["src"],
+    fields: { ...STYLE_FIELDS, src: "string" },
+    summary: "插入本地图片",
+    usage: "exdraw image -f <file> --src ./logo.png --x 0 --y 0 --width 200",
+    extraHelp: "    --src <path>              本地图片路径（必填）",
   },
   frame: {
     kind: "draw",
@@ -177,8 +237,27 @@ const COMMANDS = {
     fields: { ...STYLE_FIELDS, name: "string", children: "list" },
     summary: "画 Frame 容器",
     usage: "exdraw frame -f <file> --x 40 --y 40 --width 400 --height 300 --name Compute",
-    extraHelp: `    --name <s>                帧名称（也可写成位置参数）
+    extraHelp: `    --name <s>                帧名称
     --children <ids>          已有元素 id，逗号分隔`,
+  },
+  embed: {
+    kind: "draw",
+    method: "embed",
+    aliases: ["embeddable"],
+    positional: "link",
+    required: ["link"],
+    fields: { ...STYLE_FIELDS, link: "string" },
+    summary: "嵌入网页",
+    usage: "exdraw embed -f <file> --x 0 --y 0 --width 480 --height 320 --link https://example.com",
+  },
+  group: {
+    kind: "draw",
+    method: "group",
+    required: ["ids"],
+    fields: { ids: "list", id: "string" },
+    summary: "把已有元素编成一组",
+    usage: "exdraw group -f <file> --ids a,b,c",
+    extraHelp: "    --ids <ids>               元素 id，逗号分隔",
   },
   inspect: {
     kind: "meta",
@@ -212,8 +291,7 @@ function resolveCommand(name) {
 function applyAliases(flags) {
   const out = { ...flags };
   for (const [from, to] of Object.entries(FLAG_ALIASES)) {
-    if (!(from in out)) continue;
-    if (from === to) continue;
+    if (!(from in out) || from === to) continue;
     if (!(to in out) || out[to] === true) out[to] = out[from];
     delete out[from];
   }
@@ -265,6 +343,21 @@ function buildDrawOpts(spec, flags, positionals) {
   if (opts.fontFamily != null) opts.fontFamily = resolveFontFamily(opts.fontFamily);
   if ("startArrowhead" in opts) opts.startArrowhead = resolveArrowhead(opts.startArrowhead);
   if ("endArrowhead" in opts) opts.endArrowhead = resolveArrowhead(opts.endArrowhead);
+  if (opts.angle != null) opts.angle = (opts.angle * Math.PI) / 180;
+  if (opts.elbow != null) opts.elbowed = opts.elbow;
+
+  if (typeof opts.label === "string" && (opts.labelColor || opts.labelSize || opts.labelAlign)) {
+    opts.label = {
+      text: opts.label,
+      strokeColor: opts.labelColor,
+      fontSize: opts.labelSize,
+      textAlign: opts.labelAlign ?? "center",
+      verticalAlign: "middle",
+    };
+  }
+  delete opts.labelColor;
+  delete opts.labelSize;
+  delete opts.labelAlign;
 
   for (const key of spec.required ?? []) {
     if (opts[key] == null || opts[key] === "") {
@@ -277,33 +370,46 @@ function buildDrawOpts(spec, flags, positionals) {
 
 function showHelp(print) {
   print(`
-  exdraw — 用一条条 CLI 命令往 .excalidraw 里画图
+  exdraw — 每个基础操作一条 CLI 命令，追加写入 .excalidraw
 
-  绘图命令（每次追加写入 -f 指定的文件）:
-    text        写文字
-    rect        画矩形          别名: rectangle
-    oval        画椭圆          别名: ellipse
-    diamond     画菱形
-    line        画直线 / 折线
-    arrow       画箭头
-    frame       画 Frame
-    background  设置画布背景色
+  形状:
+    rect        矩形（默认圆角）    别名: rectangle
+    square      正方形
+    diamond     菱形
+    oval        椭圆                别名: ellipse
+    circle      圆
 
-  文件命令:
+  线与箭头:
+    line        直线 / 折线 / 多边形
+    arrow       箭头（支持 --from/--to 绑定）
+    freedraw    手绘                别名: draw
+
+  文字与媒体:
+    text        文字
+    image       本地图片            别名: img
+    embed       嵌入网页            别名: embeddable
+
+  结构:
+    frame       Frame 容器
+    group       编组
+    background  画布背景色
+
+  文件:
     new         新建空白画布
     inspect     查看元素概要
 
   用法:
-    exdraw new  -f test.excalidraw
-    exdraw text -f test.excalidraw --x 100 --y 20 --text "集群模式"
-    exdraw rect -f test.excalidraw --x 100 --y 80 --width 320 --height 50 --label Browser --rounded
-    exdraw arrow -f test.excalidraw --points "260,130;260,200" --label HTTP
+    exdraw new -f test.excalidraw
+    exdraw rect -f test.excalidraw --id browser --x 100 --y 80 --width 200 --height 50 --label Browser
+    exdraw rect -f test.excalidraw --id web --x 100 --y 200 --width 200 --height 50 --label Web
+    exdraw arrow -f test.excalidraw --from browser --to web --label HTTP
+    exdraw circle -f test.excalidraw --cx 400 --cy 120 --r 40 --label DB
     exdraw inspect test.excalidraw -v
 
   查看某条命令的参数:
-    exdraw text --help
     exdraw rect --help
     exdraw arrow --help
+    exdraw circle --help
 `);
 }
 
@@ -313,7 +419,7 @@ function showCommandHelp(name, print) {
   ${spec.usage}
 
   ${spec.summary}
-${spec.kind === "draw" ? COMMON_DRAW_FLAGS : ""}${spec.extraHelp ? `\n${spec.extraHelp}\n` : ""}
+${spec.kind === "draw" && name !== "background" && name !== "group" ? COMMON_DRAW_FLAGS : ""}${spec.extraHelp ? `\n${spec.extraHelp}\n` : ""}
 `);
 }
 
@@ -332,7 +438,11 @@ async function cmdBackground(file, opts, io) {
 
 async function cmdDraw(file, spec, opts, io) {
   const d = await Drawing.load(file);
-  d[spec.method](opts);
+  try {
+    d[spec.method](opts);
+  } catch (err) {
+    throw new CliError(err.message);
+  }
   await d.save(file);
   if (!io.quiet) {
     io.stderr.write(`✓ ${spec.method} → ${file}（${d.toElements().length} 个元素）\n`);
@@ -350,7 +460,7 @@ async function cmdInspect(file, verbose, io) {
 
   const out = [];
   out.push(`\n📄  ${file}`);
-  out.push(`    版本: ${data.version}  元素数: ${data.elements.length}`);
+  out.push(`    版本: ${data.version}  元素数: ${data.elements.length}  图片: ${Object.keys(data.files ?? {}).length}`);
   out.push(`    背景: ${data.appState?.viewBackgroundColor ?? "(默认)"}\n`);
 
   const groups = {};
@@ -366,9 +476,10 @@ async function cmdInspect(file, verbose, io) {
     for (const el of data.elements) {
       const extra =
         el.type === "text" ? `  "${el.text?.slice(0, 40)}"` :
-        el.type === "arrow" ? `  → ${el.endArrowhead}` : "";
+        el.type === "arrow" ? `  → ${el.endArrowhead}${el.elbowed ? "  elbow" : ""}` :
+        el.type === "image" ? `  file=${el.fileId?.slice(0, 8) ?? "-"}` : "";
       out.push(
-        `  [${el.type}]  id=${el.id.slice(0, 8)}…  x=${el.x} y=${el.y}  w=${el.width} h=${el.height}${extra}`
+        `  [${el.type}]  id=${el.id}  x=${Math.round(el.x)} y=${Math.round(el.y)}  w=${Math.round(el.width)} h=${Math.round(el.height)}${extra}`
       );
     }
   }
@@ -376,13 +487,18 @@ async function cmdInspect(file, verbose, io) {
   io.stdout.write(out.join("\n") + "\n");
 }
 
+const FACTORIES = {
+  rectangle, square, ellipse, circle, diamond, text, line, arrow,
+  frame, freedraw, image, embeddable,
+};
+
 async function cmdRun(scriptPath, outPath, io) {
   if (!scriptPath) throw new CliError("用法: exdraw run <script.js> -o out.excalidraw");
   const absPath = resolve(io.cwd, scriptPath);
 
   Object.assign(globalThis, {
     Drawing,
-    rectangle, ellipse, diamond, text, line, arrow, frame,
+    ...FACTORIES,
     FONT_FAMILY, COLOR_PALETTE, FILL_STYLE, STROKE_STYLE,
     STROKE_WIDTH, ROUGHNESS, ROUNDNESS, ARROWHEAD,
   });
@@ -396,7 +512,6 @@ async function cmdRun(scriptPath, outPath, io) {
 
   const defaultExport = mod.default;
   let json;
-
   if (typeof defaultExport === "function") {
     const d = new Drawing();
     await defaultExport(d);
@@ -406,11 +521,9 @@ async function cmdRun(scriptPath, outPath, io) {
   } else if (typeof defaultExport === "string") {
     json = defaultExport;
   } else if (defaultExport && typeof defaultExport === "object" && Array.isArray(defaultExport.elements)) {
-    json = serialize(defaultExport.elements, defaultExport.appState);
+    json = serialize(defaultExport.elements, defaultExport.appState, defaultExport.files);
   } else {
-    throw new CliError(
-      "脚本的 default export 必须是 function(drawing)、Drawing 实例、JSON 字符串或 { elements, appState }"
-    );
+    throw new CliError("脚本的 default export 必须是 function(drawing)、Drawing 实例、JSON 字符串或 { elements, appState }");
   }
 
   if (outPath) {
@@ -431,19 +544,27 @@ async function cmdBuild(jsonPath, outPath, io) {
     throw new CliError(`JSON 解析失败: ${e.message}`);
   }
 
-  const factories = { rectangle, ellipse, diamond, text, line, arrow, frame };
-  const elements = (data.elements ?? []).map((el) => {
+  const typeMap = {
+    rectangle, square, ellipse, circle, diamond, text, line, arrow,
+    frame, freedraw, image, embeddable,
+  };
+  const files = { ...(data.files ?? {}) };
+  const elements = (data.elements ?? []).flatMap((el) => {
     if (!el.id || !el.seed) {
-      const factory = factories[el.type];
+      const factory = typeMap[el.type];
       if (factory) {
         const built = factory(el);
-        return Array.isArray(built) ? built : built;
+        if (built?.element) {
+          if (built.file) files[built.file.id] = built.file;
+          return [built.element];
+        }
+        return Array.isArray(built) ? built : [built];
       }
     }
-    return el;
-  }).flat();
+    return [el];
+  });
 
-  const json = serialize(elements, data.appState ?? {});
+  const json = serialize(elements, data.appState ?? {}, files);
   if (outPath) {
     await writeFile(outPath, json, "utf8");
     if (!io.quiet) io.stderr.write(`✓ 已写入: ${outPath}\n`);
@@ -452,10 +573,6 @@ async function cmdBuild(jsonPath, outPath, io) {
   }
 }
 
-/**
- * @param {string[]} argv
- * @param {{ cwd?: string, stdout?: { write: Function }, stderr?: { write: Function } }} [options]
- */
 export async function runCli(argv, options = {}) {
   const io = {
     cwd: options.cwd ?? process.cwd(),
@@ -488,23 +605,18 @@ export async function runCli(argv, options = {}) {
   }
 
   if (command === "new") {
-    const file = pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd });
-    await cmdNew(file, io);
+    await cmdNew(pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd }), io);
     return;
   }
-
   if (command === "inspect") {
-    const file = pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd });
-    await cmdInspect(file, Boolean(flags.verbose), io);
+    await cmdInspect(pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd }), Boolean(flags.verbose), io);
     return;
   }
-
   if (command === "run") {
     const outPath = flags.file ?? flags.output;
     await cmdRun(positionals[0], outPath ? resolve(io.cwd, outPath) : null, io);
     return;
   }
-
   if (command === "build") {
     const outPath = flags.file ?? flags.output;
     await cmdBuild(positionals[0], outPath ? resolve(io.cwd, outPath) : null, io);
@@ -515,12 +627,15 @@ export async function runCli(argv, options = {}) {
 
   if (command === "background") {
     const color = flags.color ?? flags.background ?? flags.fill ?? flags.bg ?? positionals[0];
-    if (!color || color === true) throw new CliError("缺少背景色，例如: exdraw background -f t.excalidraw --color \"#f8f9fa\"");
+    if (!color || color === true) {
+      throw new CliError("缺少背景色，例如: exdraw background -f t.excalidraw --color \"#f8f9fa\"");
+    }
     await cmdBackground(file, { color: String(color) }, io);
     return;
   }
 
   const opts = buildDrawOpts(spec, flags, positionals);
+  if (opts.src) opts.src = resolve(io.cwd, opts.src);
   await cmdDraw(file, spec, opts, io);
 }
 

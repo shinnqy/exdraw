@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test, describe } from "node:test";
-import { rectangle, ellipse, diamond, text, line, arrow } from "../src/elements.js";
+import { rectangle, square, ellipse, circle, diamond, text, line, arrow, freedraw } from "../src/elements.js";
 import { serialize, deserialize } from "../src/serialize.js";
 import { Drawing } from "../src/Drawing.js";
 
@@ -27,10 +27,11 @@ describe("rectangle()", () => {
     assert.equal(el.strokeColor, "#ff0000");
   });
 
-  test("rounded=true 应设置 roundness", () => {
-    const el = rectangle({ rounded: true });
-    assert.ok(el.roundness !== null);
-    assert.equal(el.roundness.type, 3); // ADAPTIVE_RADIUS
+  test("默认圆角，--sharp 取消", () => {
+    const rounded = rectangle();
+    assert.deepEqual(rounded.roundness, { type: 3 });
+    const sharp = rectangle({ sharp: true });
+    assert.equal(sharp.roundness, null);
   });
 
   test("带 label 应返回 [shape, text] 数组", () => {
@@ -52,6 +53,12 @@ describe("text()", () => {
     assert.ok(typeof el.fontSize === "number");
     assert.ok(typeof el.fontFamily === "number");
   });
+
+  test("中文宽度按 1em 估算，避免被裁切", () => {
+    const el = text({ text: "集群模式", x: 100, y: 20, fontSize: 20 });
+    assert.equal(el.width, 80);
+    assert.equal(el.height, 25);
+  });
 });
 
 describe("arrow()", () => {
@@ -62,6 +69,18 @@ describe("arrow()", () => {
     assert.equal(el.points[0][0], 0);
     assert.equal(el.endArrowhead, "arrow");
     assert.equal(el.startArrowhead, null);
+    assert.equal(el.elbowed, false);
+    assert.equal(el.lastCommittedPoint, null);
+    assert.ok(el.roundness);
+  });
+
+  test("elbow 箭头带官方折线字段", () => {
+    const el = arrow({ x: 0, y: 0, width: 80, elbowed: true });
+    assert.equal(el.elbowed, true);
+    assert.equal(el.roundness, null);
+    assert.equal(el.startIsSpecial, false);
+    assert.equal(el.endIsSpecial, false);
+    assert.equal(el.fixedSegments, null);
   });
 
   test("自定义 points 应正确展开", () => {
@@ -80,21 +99,58 @@ describe("arrow()", () => {
 });
 
 describe("line()", () => {
-  test("基础直线", () => {
+  test("基础直线含 schema 字段", () => {
     const el = line({ x: 0, y: 0, width: 200 });
     assert.equal(el.type, "line");
     assert.ok(Array.isArray(el.points));
+    assert.equal(el.lastCommittedPoint, null);
+    assert.equal(el.polygon, false);
+    assert.equal(el.startBinding, null);
+    assert.equal(el.endBinding, null);
+  });
+
+  test("polygon 自动闭合", () => {
+    const el = line({ points: [[0, 0], [40, 0], [20, 30]], polygon: true });
+    const last = el.points[el.points.length - 1];
+    assert.deepEqual(last, el.points[0]);
+    assert.equal(el.polygon, true);
   });
 });
 
-describe("ellipse() / diamond()", () => {
-  test("椭圆", () => {
+describe("ellipse() / diamond() / circle() / square()", () => {
+  test("椭圆默认 roundness.type=2", () => {
     const el = ellipse({ x: 0, y: 0, width: 100, height: 60 });
     assert.equal(el.type, "ellipse");
+    assert.equal(el.roundness.type, 2);
   });
-  test("菱形", () => {
+  test("菱形默认 roundness.type=2", () => {
     const el = diamond({ x: 0, y: 0 });
     assert.equal(el.type, "diamond");
+    assert.equal(el.roundness.type, 2);
+  });
+  test("圆是等宽高椭圆", () => {
+    const el = circle({ cx: 100, cy: 100, r: 40 });
+    assert.equal(el.type, "ellipse");
+    assert.equal(el.width, 80);
+    assert.equal(el.height, 80);
+    assert.equal(el.x, 60);
+    assert.equal(el.y, 60);
+  });
+  test("正方形等边", () => {
+    const el = square({ x: 0, y: 0, size: 90 });
+    assert.equal(el.type, "rectangle");
+    assert.equal(el.width, 90);
+    assert.equal(el.height, 90);
+  });
+});
+
+describe("freedraw()", () => {
+  test("含 points/pressures/simulatePressure", () => {
+    const el = freedraw({ points: [[0, 0], [10, 4], [20, 2]] });
+    assert.equal(el.type, "freedraw");
+    assert.equal(el.points.length, 3);
+    assert.equal(el.pressures.length, 3);
+    assert.equal(el.simulatePressure, true);
   });
 });
 
@@ -172,6 +228,19 @@ describe("Drawing", () => {
     const textEl = els.find((e) => e.type === "text");
     assert.ok(arrowEl);
     assert.ok(textEl);
+  });
+
+  test("arrow --from/--to 写入 binding", () => {
+    const d = new Drawing();
+    d.rect({ id: "a", x: 0, y: 0, width: 80, height: 40 });
+    d.rect({ id: "b", x: 200, y: 0, width: 80, height: 40 });
+    d.arrow({ from: "a", to: "b", label: "go" });
+    const els = d.toElements();
+    const ar = els.find((e) => e.type === "arrow");
+    assert.equal(ar.startBinding.elementId, "a");
+    assert.equal(ar.endBinding.elementId, "b");
+    const a = els.find((e) => e.id === "a");
+    assert.ok(a.boundElements.some((b) => b.id === ar.id && b.type === "arrow"));
   });
 
   test("load 读回已保存文件", async () => {
