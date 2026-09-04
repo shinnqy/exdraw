@@ -1,0 +1,32 @@
+{
+  "name": "excalidraw-lib",
+  "version": "0.1.0",
+  "description": "用参数调用 Excalidraw 基础绘图能力，生成 .excalidraw 文件，无需手写冗长 JSON",
+  "type": "module",
+  "bin": {
+    "exdraw": "./bin/exdraw.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "example:flowchart": "node bin/exdraw.js run examples/flowchart.js -o examples/flowchart.excalidraw",
+    "example:primitives": "node bin/exdraw.js run examples/primitives.js -o examples/primitives.excalidraw",
+    "example:scene": "node bin/exdraw.js build examples/scene.json -o examples/scene.excalidraw"
+  },
+  "keywords": [
+    "excalidraw",
+    "cli",
+    "diagram",
+    "drawing"
+  ],
+  "license": "MIT"
+}

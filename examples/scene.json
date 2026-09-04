@@ -1,0 +1,41 @@
+{
+  "elements": [
+    {
+      "type": "rectangle",
+      "x": 100,
+      "y": 100,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#a5d8ff",
+      "strokeColor": "#1971c2",
+      "label": { "text": "JSON 构建示例", "textAlign": "center", "verticalAlign": "middle" }
+    },
+    {
+      "type": "arrow",
+      "x": 300,
+      "y": 150,
+      "width": 120,
+      "height": 0
+    },
+    {
+      "type": "ellipse",
+      "x": 420,
+      "y": 100,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#b2f2bb",
+      "strokeColor": "#099268"
+    },
+    {
+      "type": "text",
+      "x": 100,
+      "y": 240,
+      "text": "通过 exdraw build 命令生成",
+      "fontSize": 20,
+      "strokeColor": "#495057"
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#f8f9fa"
+  }
+}

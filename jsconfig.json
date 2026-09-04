@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "target": "ES2022",
+    "moduleResolution": "nodenext",
+    "checkJs": false
+  },
+  "include": ["src", "bin", "examples", "test"]
+}
