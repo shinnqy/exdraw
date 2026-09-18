@@ -2,14 +2,12 @@
  * 序列化模块
  * .excalidraw 文档格式见 https://docs.excalidraw.com/docs/codebase/json-schema
  *
- * 不要写入 `index`：自造的 a10、b1 不是合法 fractional-indexing 键。
- * VS Code 扩展（@excalidraw/excalidraw 0.18.1）在 restore 时调用
- * generateNKeysBetween，遇到非法键会抛错，表现为
- * “Failed to load Document: Error: Unable to load initial data”。
- * 官网较新，会自行修复，所以同一文件能在官网打开。
- * 能在扩展里打开的文件也不带 index，交给编辑器打开时分配。
+ * 合法的 `index` 使用 fractional-indexing 生成并保留；新文件仍可省略
+ * index，非法或损坏的旧 index 不会原样写回。VS Code 扩展在 restore
+ * 时会校验 fractional index，不能写入自造的 a10、b1 之类的键。
  */
 import { EXCALIDRAW_VERSION, EXCALIDRAW_SOURCE } from "./constants.js";
+import { prepareOrderIndexes } from "./order.js";
 
 const DEFAULT_APP_STATE = {
   gridSize: 20,
@@ -18,15 +16,32 @@ const DEFAULT_APP_STATE = {
   viewBackgroundColor: "#ffffff",
 };
 
+// Loaded elements may contain explicit legacy fields which should survive a
+// load/edit/save round trip. Symbol properties are ignored by JSON.stringify,
+// but enumerable symbols are copied by object spread in edit operations.
+const LOADED_ELEMENT = Symbol("exdraw.loadedElement");
+
+function markLoadedElement(element) {
+  Object.defineProperty(element, LOADED_ELEMENT, {
+    value: true,
+    enumerable: true,
+    configurable: true,
+  });
+  return element;
+}
+
 /**
- * 写成与 VS Code 扩展兼容的元素：去掉 index；line 仅在 polygon 为 true 时写出。
+ * 写成与 VS Code 扩展兼容的元素：保留合法 index，省略 null/非法 index；
+ * 新建 line 的默认 polygon:false 仍保持紧凑输出。
  * @param {object} element
  */
 function toSerializableElement(element) {
-  const { index: _index, ...rest } = element;
-  if (rest.polygon === false) {
-    const { polygon: _polygon, ...withoutPolygon } = rest;
-    return withoutPolygon;
+  const rest = { ...element };
+  if (rest.index == null) delete rest.index;
+  // Keep explicit `polygon: false` from an existing document, while retaining
+  // the old compact output for newly-created line elements.
+  if (rest.polygon === false && !element[LOADED_ELEMENT]) {
+    delete rest.polygon;
   }
   return rest;
 }
@@ -35,13 +50,15 @@ function toSerializableElement(element) {
  * @param {object[]} elements
  * @param {object} [appState]
  * @param {object} [files]
+ * @param {{ source?: string, version?: number }} [metadata]
  */
-export function serialize(elements, appState = {}, files = {}) {
+export function serialize(elements, appState = {}, files = {}, metadata = {}) {
+  const orderedElements = prepareOrderIndexes(elements);
   const data = {
     type: "excalidraw",
-    version: EXCALIDRAW_VERSION,
-    source: EXCALIDRAW_SOURCE,
-    elements: elements.map(toSerializableElement),
+    version: metadata.version ?? EXCALIDRAW_VERSION,
+    source: metadata.source ?? EXCALIDRAW_SOURCE,
+    elements: orderedElements.map(toSerializableElement),
     appState: {
       ...DEFAULT_APP_STATE,
       ...appState,
@@ -58,9 +75,10 @@ export function deserialize(json) {
     throw new Error(`不是合法的 excalidraw 文件（type="${data.type}"）`);
   }
   return {
-    elements: data.elements ?? [],
+    elements: (data.elements ?? []).map(markLoadedElement),
     appState: data.appState ?? {},
     files: data.files ?? {},
     version: data.version,
+    source: data.source ?? EXCALIDRAW_SOURCE,
   };
 }

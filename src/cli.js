@@ -5,6 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Drawing } from "./Drawing.js";
+import { validateScene } from "./edit.js";
 import { serialize, deserialize } from "./serialize.js";
 import {
   rectangle, square, ellipse, circle, diamond, text, line, arrow,
@@ -383,6 +384,186 @@ const COMMANDS = {
       P("--id <id>", "自定义组 id"),
     ],
   },
+  edit: {
+    kind: "edit",
+    group: "file",
+    usesFile: true,
+    summary: "按元素类型编辑已有元素（rect/text/arrow/line 等）",
+    usage: "exdraw edit <type> -f <file> --id <id> [options]",
+    params: [
+      P("<type>", "rect | text | arrow | line | diamond | oval | circle | image | embed | frame", true),
+      P("-f, --file <path>", "写入文件", true),
+      P("--id <id>", "要修改的元素 id", true),
+    ],
+  },
+  label: {
+    kind: "edit",
+    group: "media",
+    usesFile: true,
+    required: ["container", "text"],
+    fields: {
+      container: "string",
+      text: "string",
+      ...TEXT_FIELDS,
+      strokeColor: "string",
+      backgroundColor: "string",
+      opacity: "number",
+      link: "string",
+      locked: "boolean",
+    },
+    summary: "给已有容器新增或修改绑定文本",
+    usage: "exdraw label -f <file> --container <shape-id> --text \"新标签\"",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--container <id>", "承载文本的形状 / 箭头 id", true),
+      P("--text <s>", "文本内容", true),
+      P("--font-size <n>", "字号"),
+      P("--font-family <s>", "字体"),
+      P("--text-align <s>", "left | center | right"),
+      P("--vertical-align <s>", "top | middle | bottom"),
+    ],
+  },
+  bind: {
+    kind: "edit",
+    group: "line",
+    usesFile: true,
+    required: ["id"],
+    fields: { id: "string", from: "string", to: "string", fromSide: "string", toSide: "string" },
+    summary: "修改已有线 / 箭头的端点绑定",
+    usage: "exdraw bind -f <file> --id <arrow-id> --from <id> --to <id>",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--id <id>", "线 / 箭头 id", true),
+      P("--from <id>", "起点元素 id"),
+      P("--to <id>", "终点元素 id"),
+      P("--from-side --to-side", "left | right | top | bottom | center"),
+    ],
+  },
+  unbind: {
+    kind: "edit",
+    group: "line",
+    usesFile: true,
+    required: ["id"],
+    fields: { id: "string", side: "string" },
+    summary: "解除已有线 / 箭头的端点绑定",
+    usage: "exdraw unbind -f <file> --id <arrow-id> --side from",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--id <id>", "线 / 箭头 id", true),
+      P("--side <s>", "from | to | both，默认 both"),
+    ],
+  },
+  move: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["ids", "dx", "dy"],
+    fields: { ids: "list", dx: "number", dy: "number" },
+    summary: "移动一个或多个已有元素",
+    usage: "exdraw move -f <file> --ids a,b --dx 20 --dy 10",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--ids <ids>", "元素 id，逗号分隔", true),
+      P("--dx <n> --dy <n>", "相对位移", true),
+    ],
+  },
+  resize: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["id"],
+    fields: { id: "string", width: "number", height: "number" },
+    summary: "调整已有元素尺寸",
+    usage: "exdraw resize -f <file> --id a --width 300 --height 100",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--id <id>", "元素 id", true),
+      P("--width --height <n>", "新尺寸，至少提供一个", true),
+    ],
+  },
+  rotate: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["ids", "angle"],
+    fields: { ids: "list", angle: "number", relative: "boolean" },
+    summary: "旋转一个或多个已有元素",
+    usage: "exdraw rotate -f <file> --ids a,b --angle 15",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--ids <ids>", "元素 id，逗号分隔", true),
+      P("--angle <deg>", "角度；默认绝对角度", true),
+      P("--relative", "相对当前角度增加"),
+    ],
+  },
+  delete: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["ids"],
+    fields: { ids: "list", cascade: "boolean" },
+    summary: "软删除已有元素并修复引用",
+    usage: "exdraw delete -f <file> --ids a,b",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--ids <ids>", "元素 id，逗号分隔", true),
+      P("--cascade / --no-cascade", "是否连带删除绑定文本，默认是"),
+    ],
+  },
+  purge: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["ids"],
+    fields: { ids: "list" },
+    summary: "物理移除元素并清理无引用图片文件",
+    usage: "exdraw purge -f <file> --ids a,b",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--ids <ids>", "元素 id，逗号分隔", true),
+    ],
+  },
+  ungroup: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    fields: { groupId: "string", ids: "list" },
+    summary: "解除已有编组",
+    usage: "exdraw ungroup -f <file> --group-id <group-id>",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--group-id <id>", "组 id"),
+      P("--ids <ids>", "从这些元素推断其组 id"),
+    ],
+  },
+  unframe: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    fields: { frameId: "string", ids: "list" },
+    summary: "将元素移出 Frame",
+    usage: "exdraw unframe -f <file> --frame-id <frame-id>",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--frame-id <id>", "Frame id"),
+      P("--ids <ids>", "元素 id，逗号分隔"),
+    ],
+  },
+  order: {
+    kind: "edit",
+    group: "structure",
+    usesFile: true,
+    required: ["ids"],
+    fields: { ids: "list", before: "string", after: "string", front: "boolean", back: "boolean" },
+    summary: "调整元素图层顺序并维护 fractional index",
+    usage: "exdraw order -f <file> --ids a,b --before c",
+    params: [
+      P("-f, --file <path>", "写入文件", true),
+      P("--ids <ids>", "元素 id，逗号分隔", true),
+      P("--before <id> / --after <id>", "放到目标前 / 后"),
+      P("--front / --back", "置顶 / 置底"),
+    ],
+  },
   inspect: {
     kind: "meta",
     group: "file",
@@ -391,6 +572,19 @@ const COMMANDS = {
     params: [
       P("<file> / -f <file>", "要查看的 .excalidraw 文件", true),
       P("-v, --verbose", "列出每个元素的 id、坐标、尺寸"),
+      P("--id <id>", "只查看一个元素"),
+      P("--type <type>", "只查看一种元素类型"),
+      P("--refs", "显示 container / binding / group 引用"),
+    ],
+  },
+  validate: {
+    kind: "meta",
+    group: "file",
+    summary: "校验元素引用、文件引用和 fractional index",
+    usage: "exdraw validate <file.excalidraw>",
+    params: [
+      P("<file> / -f <file>", "要校验的 .excalidraw 文件", true),
+      P("--strict", "将警告也作为失败处理"),
     ],
   },
   run: {
@@ -569,6 +763,9 @@ function showHelp(print) {
   chunks.push("    exdraw rect -f test.excalidraw --id browser --x 100 --y 80 --width 200 --height 50 --label Browser");
   chunks.push("    exdraw arrow -f test.excalidraw --from browser --to web --label HTTP");
   chunks.push("    exdraw circle -f test.excalidraw --cx 400 --cy 120 --r 40 --label DB");
+  chunks.push("    exdraw edit rect -f test.excalidraw --id browser --x 120 --width 240");
+  chunks.push("    exdraw move -f test.excalidraw --ids browser,web --dx 20 --dy 10");
+  chunks.push("    exdraw validate test.excalidraw");
   chunks.push("    exdraw inspect test.excalidraw -v");
   chunks.push("");
   print(`\n${chunks.join("\n")}\n`);
@@ -580,6 +777,95 @@ function showCommandHelp(name, print) {
     ? `\n  通用样式参数:\n${COMMON_DRAW_FLAGS}\n`
     : "";
   print(`\n${renderCommandBlock(name, spec)}\n${extra}\n`);
+}
+
+const EDIT_TYPE_ALIASES = {
+  rect: "rect",
+  rectangle: "rect",
+  square: "square",
+  diamond: "diamond",
+  oval: "oval",
+  ellipse: "oval",
+  circle: "circle",
+  text: "text",
+  line: "line",
+  arrow: "arrow",
+  freedraw: "freedraw",
+  draw: "freedraw",
+  image: "image",
+  img: "image",
+  embed: "embed",
+  embeddable: "embed",
+  frame: "frame",
+};
+
+function resolveEditType(rawType) {
+  const type = EDIT_TYPE_ALIASES[String(rawType ?? "").toLowerCase()];
+  if (!type) {
+    throw new CliError(`未知编辑类型: ${rawType ?? ""}；可选 rect/text/arrow/line/diamond/oval/circle/image/embed/frame`);
+  }
+  return type;
+}
+
+function editTypeSpec(type) {
+  const spec = COMMANDS[type];
+  if (!spec) throw new CliError(`未知编辑类型: ${type}`);
+  return { ...spec, required: [] };
+}
+
+function showEditTypeHelp(rawType, print) {
+  const type = resolveEditType(rawType);
+  const base = editTypeSpec(type);
+  const spec = {
+    ...base,
+    summary: `编辑已有元素：${base.summary}`,
+    usage: `exdraw edit ${type} -f <file> --id <id> [options]`,
+    params: [
+      P("--id <id>", "要修改的元素 id", true),
+      ...(base.params ?? []).map((param) =>
+        param.flag.startsWith("-f") ? param : { ...param, required: false }
+      ),
+    ],
+  };
+  const extra = spec.usesStyle
+    ? `\n  通用样式参数:\n${COMMON_DRAW_FLAGS}\n`
+    : "";
+  print(`\n${renderCommandBlock(`edit ${type}`, spec)}\n${extra}\n`);
+}
+
+function expectedElementTypes(type) {
+  if (type === "rect" || type === "square") return ["rectangle"];
+  if (type === "oval" || type === "circle") return ["ellipse"];
+  if (type === "embed") return ["embeddable"];
+  if (type === "freedraw") return ["freedraw"];
+  return [type];
+}
+
+function roundnessForEdit(type, opts, current) {
+  if (!opts.sharp && opts.rounded == null) return;
+  if (opts.sharp) return null;
+  if (!opts.rounded) return current.roundness;
+  if (current.roundness) return current.roundness;
+  if (type === "rect" || type === "square" || current.type === "rectangle") {
+    return { type: ROUNDNESS.ADAPTIVE_RADIUS };
+  }
+  if (["diamond", "oval", "circle"].includes(type)) {
+    return { type: ROUNDNESS.PROPORTIONAL_RADIUS };
+  }
+  if (["line", "arrow"].includes(type)) {
+    return { type: ROUNDNESS.PROPORTIONAL_RADIUS };
+  }
+  return null;
+}
+
+function formatValidationReport(report) {
+  const lines = [
+    `元素: ${report.stats.elements}（活动 ${report.stats.activeElements}）  文件: ${report.stats.files}`,
+    report.ok ? "结果: OK" : `结果: FAIL（${report.errors.length} 个错误）`,
+  ];
+  for (const error of report.errors) lines.push(`  ✗ ${error}`);
+  for (const warning of report.warnings) lines.push(`  ! ${warning}`);
+  return lines.join("\n") + "\n";
 }
 
 async function cmdNew(file, io) {
@@ -608,7 +894,180 @@ async function cmdDraw(file, spec, opts, io) {
   }
 }
 
-async function cmdInspect(file, verbose, io) {
+async function cmdLabel(file, opts, io) {
+  const d = await Drawing.load(file);
+  const { container, text: content, ...labelOpts } = opts;
+  d.label(container, { ...labelOpts, text: content });
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ label ${container} → ${file}\n`);
+}
+
+async function cmdBind(file, opts, io) {
+  if (opts.from == null && opts.to == null) {
+    throw new CliError("bind 至少需要 --from 或 --to");
+  }
+  const d = await Drawing.load(file);
+  const binding = {};
+  for (const key of ["from", "to", "fromSide", "toSide"]) {
+    if (Object.prototype.hasOwnProperty.call(opts, key)) binding[key] = opts[key];
+  }
+  d.bind(opts.id, binding);
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ bind ${opts.id} → ${file}\n`);
+}
+
+async function cmdUnbind(file, opts, io) {
+  const side = opts.side ?? "both";
+  if (!["from", "to", "both"].includes(side)) {
+    throw new CliError("--side 只能是 from、to 或 both");
+  }
+  const d = await Drawing.load(file);
+  d.unbind(opts.id, side);
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ unbind ${opts.id} ${side} → ${file}\n`);
+}
+
+async function cmdEdit(file, rawType, flags, positionals, io) {
+  const type = resolveEditType(rawType);
+  const opts = buildDrawOpts(editTypeSpec(type), flags, positionals);
+  const id = opts.id;
+  if (!id) throw new CliError("编辑已有元素必须指定 --id <id>");
+  delete opts.id;
+  if (opts.src) opts.src = resolve(io.cwd, opts.src);
+
+  const d = await Drawing.load(file);
+  const current = d.get(id);
+  if (!current) throw new CliError(`找不到元素 id="${id}"`);
+  if (!expectedElementTypes(type).includes(current.type)) {
+    throw new CliError(`元素 id="${id}" 类型为 ${current.type}，不能按 ${type} 编辑`);
+  }
+
+  const label = opts.label;
+  delete opts.label;
+  const binding = {};
+  for (const key of ["from", "to", "fromSide", "toSide"]) {
+    if (Object.prototype.hasOwnProperty.call(opts, key)) binding[key] = opts[key];
+    delete opts[key];
+  }
+
+  if (type === "circle") {
+    const size = opts.radius != null
+      ? Number(opts.radius) * 2
+      : (opts.diameter != null ? Number(opts.diameter) : undefined);
+    if (size != null) {
+      d.resize(id, { width: size, height: size });
+      delete opts.radius;
+      delete opts.diameter;
+    }
+    const circleTarget = d.get(id);
+    if (opts.cx != null || opts.cy != null) {
+      const nextWidth = circleTarget.width;
+      const nextHeight = circleTarget.height;
+      d.update(id, {
+        x: opts.cx != null ? Number(opts.cx) - nextWidth / 2 : circleTarget.x,
+        y: opts.cy != null ? Number(opts.cy) - nextHeight / 2 : circleTarget.y,
+      });
+      delete opts.cx;
+      delete opts.cy;
+    }
+  }
+
+  if (type === "square" && opts.size != null) {
+    d.resize(id, { width: Number(opts.size), height: Number(opts.size) });
+    delete opts.size;
+  }
+
+  if (opts.sharp || opts.rounded != null) {
+    const roundness = roundnessForEdit(type, opts, d.get(id));
+    opts.roundness = roundness;
+  }
+  delete opts.sharp;
+  delete opts.rounded;
+  delete opts.elbow;
+
+  if (type === "image" && opts.src) {
+    d.replaceImage(id, opts);
+    delete opts.src;
+  }
+
+  d.update(id, opts);
+  if (label != null) {
+    const labelOpts = typeof label === "string" ? { text: label } : label;
+    d.label(id, labelOpts);
+  }
+  if (Object.keys(binding).length) {
+    d.bind(id, { ...binding, recompute: !Object.prototype.hasOwnProperty.call(opts, "points") });
+  }
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ edit ${type} ${id} → ${file}\n`);
+}
+
+async function cmdMove(file, opts, io) {
+  const d = await Drawing.load(file);
+  d.move(opts.ids, opts.dx, opts.dy);
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ move ${opts.ids.join(",")} → ${file}\n`);
+}
+
+async function cmdResize(file, opts, io) {
+  if (opts.width == null && opts.height == null) throw new CliError("resize 至少需要 --width 或 --height");
+  const d = await Drawing.load(file);
+  d.resize(opts.id, opts);
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ resize ${opts.id} → ${file}\n`);
+}
+
+async function cmdRotate(file, opts, io) {
+  const d = await Drawing.load(file);
+  d.rotate(opts.ids, (opts.angle * Math.PI) / 180, { relative: Boolean(opts.relative) });
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ rotate ${opts.ids.join(",")} → ${file}\n`);
+}
+
+async function cmdDelete(file, opts, io, purge = false) {
+  const d = await Drawing.load(file);
+  d.delete(opts.ids, { purge, cascade: opts.cascade !== false });
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ ${purge ? "purge" : "delete"} ${opts.ids.join(",")} → ${file}\n`);
+}
+
+async function cmdUngroup(file, opts, io) {
+  const d = await Drawing.load(file);
+  d.ungroup({ groupId: opts.groupId, ids: opts.ids });
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ ungroup → ${file}\n`);
+}
+
+async function cmdUnframe(file, opts, io) {
+  const d = await Drawing.load(file);
+  d.unframe({ frameId: opts.frameId, ids: opts.ids });
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ unframe → ${file}\n`);
+}
+
+async function cmdOrder(file, opts, io) {
+  const d = await Drawing.load(file);
+  d.order(opts.ids, opts);
+  await d.save(file);
+  if (!io.quiet) io.stderr.write(`✓ order ${opts.ids.join(",")} → ${file}\n`);
+}
+
+async function cmdValidate(file, strict, io) {
+  const raw = await readFile(file, "utf8");
+  let data;
+  try {
+    data = deserialize(raw);
+  } catch (err) {
+    throw new CliError(`无法解析文件: ${err.message}`);
+  }
+  const report = validateScene(data.elements, data.files);
+  io.stdout.write(formatValidationReport(report));
+  if (!report.ok || (strict && report.warnings.length)) {
+    throw new CliError("场景校验失败");
+  }
+}
+
+async function cmdInspect(file, options, io) {
   const raw = await readFile(file, "utf8");
   let data;
   try {
@@ -617,28 +1076,39 @@ async function cmdInspect(file, verbose, io) {
     throw new CliError(`无法解析文件: ${e.message}`);
   }
 
+  const selected = data.elements.filter((element) =>
+    (!options.id || element.id === options.id) &&
+    (!options.type || element.type === options.type)
+  );
+  if (options.id && !selected.length) throw new CliError(`找不到元素 id="${options.id}"`);
+
   const out = [];
   out.push(`\n📄  ${file}`);
   out.push(`    版本: ${data.version}  元素数: ${data.elements.length}  图片: ${Object.keys(data.files ?? {}).length}`);
   out.push(`    背景: ${data.appState?.viewBackgroundColor ?? "(默认)"}\n`);
 
   const groups = {};
-  for (const el of data.elements) {
+  for (const el of selected) {
     groups[el.type] = (groups[el.type] ?? 0) + 1;
   }
   for (const [type, count] of Object.entries(groups)) {
     out.push(`    ${type.padEnd(14)} × ${count}`);
   }
 
-  if (verbose) {
+  if (options.verbose || options.refs) {
     out.push("\n── 元素详情 ──────────────────────────────────────");
-    for (const el of data.elements) {
+    for (const el of selected) {
       const extra =
         el.type === "text" ? `  "${el.text?.slice(0, 40)}"` :
         el.type === "arrow" ? `  → ${el.endArrowhead}${el.elbowed ? "  elbow" : ""}` :
         el.type === "image" ? `  file=${el.fileId?.slice(0, 8) ?? "-"}` : "";
+      const refs = options.refs
+        ? `  container=${el.containerId ?? "-"} frame=${el.frameId ?? "-"} groups=${(el.groupIds ?? []).join(",") || "-"}`
+          + ` bound=${(el.boundElements ?? []).map((item) => `${item.type}:${item.id}`).join(",") || "-"}`
+          + ` from=${el.startBinding?.elementId ?? "-"} to=${el.endBinding?.elementId ?? "-"}`
+        : "";
       out.push(
-        `  [${el.type}]  id=${el.id}  x=${Math.round(el.x)} y=${Math.round(el.y)}  w=${Math.round(el.width)} h=${Math.round(el.height)}${extra}`
+        `  [${el.type}]  id=${el.id}  x=${Math.round(el.x)} y=${Math.round(el.y)}  w=${Math.round(el.width)} h=${Math.round(el.height)}${extra}${refs}`
       );
     }
   }
@@ -680,7 +1150,10 @@ async function cmdRun(scriptPath, outPath, io) {
   } else if (typeof defaultExport === "string") {
     json = defaultExport;
   } else if (defaultExport && typeof defaultExport === "object" && Array.isArray(defaultExport.elements)) {
-    json = serialize(defaultExport.elements, defaultExport.appState, defaultExport.files);
+    json = serialize(defaultExport.elements, defaultExport.appState, defaultExport.files, {
+      source: defaultExport.source,
+      version: defaultExport.version,
+    });
   } else {
     throw new CliError("脚本的 default export 必须是 function(drawing)、Drawing 实例、JSON 字符串或 { elements, appState }");
   }
@@ -723,7 +1196,10 @@ async function cmdBuild(jsonPath, outPath, io) {
     return [el];
   });
 
-  const json = serialize(elements, data.appState ?? {}, files);
+  const json = serialize(elements, data.appState ?? {}, files, {
+    source: data.source,
+    version: data.version,
+  });
   if (outPath) {
     await writeFile(outPath, json, "utf8");
     if (!io.quiet) io.stderr.write(`✓ 已写入: ${outPath}\n`);
@@ -759,6 +1235,10 @@ export async function runCli(argv, options = {}) {
 
   const spec = COMMANDS[command];
   if (flags.help) {
+    if (command === "edit" && positionals[0]) {
+      showEditTypeHelp(positionals[0], (s) => io.stdout.write(s));
+      return;
+    }
     showCommandHelp(command, (s) => io.stdout.write(s));
     return;
   }
@@ -768,7 +1248,19 @@ export async function runCli(argv, options = {}) {
     return;
   }
   if (command === "inspect") {
-    await cmdInspect(pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd }), Boolean(flags.verbose), io);
+    await cmdInspect(
+      pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd }),
+      { verbose: Boolean(flags.verbose), id: flags.id, type: flags.type, refs: Boolean(flags.refs) },
+      io
+    );
+    return;
+  }
+  if (command === "validate") {
+    await cmdValidate(
+      pickFile(flags, positionals, { required: true, positionalOk: true, cwd: io.cwd }),
+      Boolean(flags.strict),
+      io
+    );
     return;
   }
   if (command === "run") {
@@ -779,6 +1271,12 @@ export async function runCli(argv, options = {}) {
   if (command === "build") {
     const outPath = flags.file ?? flags.output;
     await cmdBuild(positionals[0], outPath ? resolve(io.cwd, outPath) : null, io);
+    return;
+  }
+
+  if (command === "edit") {
+    const file = pickFile(flags, positionals, { required: true, positionalOk: false, cwd: io.cwd });
+    await cmdEdit(file, positionals[0], flags, positionals.slice(1), io);
     return;
   }
 
@@ -795,6 +1293,51 @@ export async function runCli(argv, options = {}) {
 
   const opts = buildDrawOpts(spec, flags, positionals);
   if (opts.src) opts.src = resolve(io.cwd, opts.src);
+
+  if (command === "label") {
+    await cmdLabel(file, opts, io);
+    return;
+  }
+  if (command === "bind") {
+    await cmdBind(file, opts, io);
+    return;
+  }
+  if (command === "unbind") {
+    await cmdUnbind(file, opts, io);
+    return;
+  }
+  if (command === "move") {
+    await cmdMove(file, opts, io);
+    return;
+  }
+  if (command === "resize") {
+    await cmdResize(file, opts, io);
+    return;
+  }
+  if (command === "rotate") {
+    await cmdRotate(file, opts, io);
+    return;
+  }
+  if (command === "delete") {
+    await cmdDelete(file, opts, io, false);
+    return;
+  }
+  if (command === "purge") {
+    await cmdDelete(file, opts, io, true);
+    return;
+  }
+  if (command === "ungroup") {
+    await cmdUngroup(file, opts, io);
+    return;
+  }
+  if (command === "unframe") {
+    await cmdUnframe(file, opts, io);
+    return;
+  }
+  if (command === "order") {
+    await cmdOrder(file, opts, io);
+    return;
+  }
   await cmdDraw(file, spec, opts, io);
 }
 

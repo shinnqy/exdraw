@@ -62,6 +62,7 @@ function baseElement(type, opts) {
     seed = randomInteger(),
     version = 1,
     versionNonce = randomInteger(),
+    created = Date.now(),
   } = opts;
 
   return {
@@ -89,6 +90,7 @@ function baseElement(type, opts) {
     isDeleted: false,
     boundElements,
     updated: getUpdatedTimestamp(),
+    created,
     link,
     locked,
   };

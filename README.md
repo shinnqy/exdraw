@@ -1,6 +1,6 @@
 # exdraw
 
-每个基础绘图操作都是一条 CLI 命令。指定位置和样式，结果追加写入同一个 `.excalidraw` 文件。
+每个基础绘图和编辑操作都是一条 CLI 命令。指定位置、样式或元素 id，结果写回同一个 `.excalidraw` 文件。
 
 元素字段对齐官方 schema：<https://docs.excalidraw.com/docs/codebase/json-schema>
 
@@ -53,6 +53,35 @@ node bin/exdraw.js inspect test.excalidraw -v
 | `background` | 画布背景色 |
 | `new` | 新建空白文件 |
 | `inspect` | 查看元素概要 |
+
+## 编辑已有文件
+
+所有编辑命令都直接读取并写回已有 `.excalidraw`，不需要 `run`、JS 脚本或手写 JSON。
+
+```bash
+exdraw label -f arch.excalidraw --container <shape-id> --text "新标签"
+exdraw edit rect -f arch.excalidraw --id <id> --x 100 --width 300
+exdraw edit text -f arch.excalidraw --id <text-id> --text "新文字"
+exdraw edit arrow -f arch.excalidraw --id <arrow-id> --from <a> --to <b>
+exdraw move -f arch.excalidraw --ids a,b --dx 20 --dy 10
+exdraw resize -f arch.excalidraw --id a --width 300 --height 100
+exdraw rotate -f arch.excalidraw --ids a,b --angle 15
+```
+
+结构和删除操作：
+
+```bash
+exdraw bind -f arch.excalidraw --id <arrow-id> --from <a> --to <b>
+exdraw unbind -f arch.excalidraw --id <arrow-id> --side from
+exdraw ungroup -f arch.excalidraw --group-id <group-id>
+exdraw unframe -f arch.excalidraw --frame-id <frame-id>
+exdraw order -f arch.excalidraw --ids a,b --before c
+exdraw delete -f arch.excalidraw --ids a,b
+exdraw purge -f arch.excalidraw --ids a,b
+exdraw validate arch.excalidraw
+```
+
+`delete` 默认是 Excalidraw 风格的软删除，会清理活动元素上的绑定；`purge` 才会物理移除元素并清理无引用图片文件。修改已有元素时会更新 `version`、`versionNonce`、`updated`，保留 `created`、原始 `source` 和合法的 fractional `index`。
 
 ```bash
 node bin/exdraw.js rect --help
