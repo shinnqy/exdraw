@@ -17,6 +17,9 @@ import {
 } from "./constants.js";
 import { parseArgv, coerce } from "./parse-args.js";
 
+// JS 文件生成入口保留源码以便内部兼容，但对 CLI 使用方永久关闭。
+const ENABLE_JS_ENTRYPOINT = false;
+
 export class CliError extends Error {
   constructor(message, exitCode = 1) {
     super(message);
@@ -608,6 +611,10 @@ const COMMANDS = {
     ],
   },
 };
+
+if (!ENABLE_JS_ENTRYPOINT) {
+  delete COMMANDS.run;
+}
 
 const ALIAS_TO_COMMAND = Object.fromEntries(
   Object.entries(COMMANDS).flatMap(([name, spec]) =>

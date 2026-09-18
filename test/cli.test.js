@@ -22,6 +22,16 @@ async function tmpFile() {
 }
 
 describe("CLI 绘图命令", () => {
+  test("JS 文件生成入口固定关闭且不出现在帮助中", async () => {
+    const io = captureIo();
+    await runCli(["--help"], io);
+    assert.doesNotMatch(io.out, /\n  run\n/);
+    await assert.rejects(
+      () => runCli(["run", "examples/flowchart.js"], captureIo()),
+      (err) => err instanceof CliError && /未知命令: run/.test(err.message)
+    );
+  });
+
   test("--help 列出全部子命令、能力与必填参数", async () => {
     const io = captureIo();
     await runCli(["--help"], io);

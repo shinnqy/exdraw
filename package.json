@@ -18,8 +18,6 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "example:flowchart": "node bin/exdraw.js run examples/flowchart.js -o examples/flowchart.excalidraw",
-    "example:primitives": "node bin/exdraw.js run examples/primitives.js -o examples/primitives.excalidraw",
     "example:scene": "node bin/exdraw.js build examples/scene.json -o examples/scene.excalidraw"
   },
   "keywords": [

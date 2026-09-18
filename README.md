@@ -56,7 +56,7 @@ node bin/exdraw.js inspect test.excalidraw -v
 
 ## 编辑已有文件
 
-所有编辑命令都直接读取并写回已有 `.excalidraw`，不需要 `run`、JS 脚本或手写 JSON。
+所有编辑命令都直接读取并写回已有 `.excalidraw`，不需要脚本入口或手写 JSON。
 
 ```bash
 exdraw label -f arch.excalidraw --container <shape-id> --text "新标签"
