@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { Drawing } from "./Drawing.js";
 import { validateScene } from "./edit.js";
+import { exportSceneToSvg } from "./svg-export.js";
 import { serialize, deserialize } from "./serialize.js";
 import {
   rectangle, square, ellipse, circle, diamond, text, line, arrow,
@@ -610,6 +611,17 @@ const COMMANDS = {
       P("-o, --file <path>", "输出 .excalidraw；省略则打印到 stdout"),
     ],
   },
+  svg: {
+    kind: "meta",
+    group: "file",
+    summary: "将已有 .excalidraw 导出为 SVG",
+    usage: "exdraw svg -f <input.excalidraw> -o <output.svg>",
+    params: [
+      P("-f, --file <path>", "输入的 .excalidraw 文件", true),
+      P("-o, --output <path>", "输出的 .svg 文件"),
+      P("--padding <n>", "SVG 外边距，默认 10"),
+    ],
+  },
 };
 
 if (!ENABLE_JS_ENTRYPOINT) {
@@ -1074,6 +1086,30 @@ async function cmdValidate(file, strict, io) {
   }
 }
 
+async function cmdSvg(inputPath, outputPath, padding, io) {
+  const raw = await readFile(inputPath, "utf8");
+  let data;
+  try {
+    data = deserialize(raw);
+  } catch (err) {
+    throw new CliError(`无法解析文件: ${err.message}`);
+  }
+
+  let svg;
+  try {
+    svg = await exportSceneToSvg(data, { padding });
+  } catch (err) {
+    throw new CliError(`SVG 导出失败: ${err.message}`);
+  }
+
+  if (outputPath) {
+    await writeFile(outputPath, svg, "utf8");
+    if (!io.quiet) io.stderr.write(`✓ svg → ${outputPath}\n`);
+  } else {
+    io.stdout.write(svg + "\n");
+  }
+}
+
 async function cmdInspect(file, options, io) {
   const raw = await readFile(file, "utf8");
   let data;
@@ -1278,6 +1314,20 @@ export async function runCli(argv, options = {}) {
   if (command === "build") {
     const outPath = flags.file ?? flags.output;
     await cmdBuild(positionals[0], outPath ? resolve(io.cwd, outPath) : null, io);
+    return;
+  }
+  if (command === "svg") {
+    const input = flags.file ?? positionals[0];
+    if (!input) throw new CliError("请用 -f <input.excalidraw> 指定输入文件");
+    const output = flags.output ?? positionals[1];
+    let padding = 10;
+    if (flags.padding != null) {
+      padding = Number(flags.padding);
+      if (!Number.isFinite(padding) || padding < 0) {
+        throw new CliError("--padding 必须是大于等于 0 的数字");
+      }
+    }
+    await cmdSvg(resolve(io.cwd, input), output ? resolve(io.cwd, output) : null, padding, io);
     return;
   }
 

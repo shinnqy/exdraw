@@ -28,6 +28,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "fractional-indexing": "^4.0.0"
+    "@excalidraw/utils": "^0.1.5",
+    "fractional-indexing": "^4.0.0",
+    "jsdom": "^26.1.0"
   }
 }

@@ -53,6 +53,7 @@ node bin/exdraw.js inspect test.excalidraw -v
 | `background` | 画布背景色 |
 | `new` | 新建空白文件 |
 | `inspect` | 查看元素概要 |
+| `svg` | 将 `.excalidraw` 导出为 SVG |
 
 ## 编辑已有文件
 
@@ -82,6 +83,12 @@ exdraw validate arch.excalidraw
 ```
 
 `delete` 默认是 Excalidraw 风格的软删除，会清理活动元素上的绑定；`purge` 才会物理移除元素并清理无引用图片文件。修改已有元素时会更新 `version`、`versionNonce`、`updated`，保留 `created`、原始 `source` 和合法的 fractional `index`。
+
+SVG 导出：
+
+```bash
+exdraw svg -f arch.excalidraw -o arch.svg
+```
 
 ```bash
 node bin/exdraw.js rect --help

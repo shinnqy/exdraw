@@ -39,7 +39,7 @@ describe("CLI 绘图命令", () => {
     for (const name of [
       "new", "text", "rect", "square", "diamond", "oval", "circle",
       "line", "arrow", "freedraw", "image", "frame", "embed", "group",
-      "background", "inspect",
+      "background", "inspect", "svg",
     ]) {
       assert.match(out, new RegExp(`\\n  ${name}\\n`));
       assert.match(out, new RegExp(`${name}[\\s\\S]*?能力:`));
@@ -158,5 +158,18 @@ describe("CLI 绘图命令", () => {
     assert.equal(img.status, "saved");
     assert.ok(data.files[img.fileId]);
     assert.match(data.files[img.fileId].dataURL, /^data:image\/png;base64,/);
+  });
+
+  test("svg 导出命令生成 SVG 文件", async () => {
+    const file = await tmpFile();
+    const output = file.replace(/\.excalidraw$/, ".svg");
+    const io = captureIo();
+    await runCli(["rect", "-f", file, "--x", "10", "--y", "20", "--width", "120", "--height", "60"], io);
+    await runCli(["text", "-f", file, "--x", "20", "--y", "30", "--text", "SVG"], io);
+    await runCli(["svg", "-f", file, "-o", output, "--padding", "8"], io);
+    const svg = await readFile(output, "utf8");
+    assert.match(svg, /^<svg\b/);
+    assert.match(svg, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+    assert.match(svg, /svg-source:excalidraw/);
   });
 });
