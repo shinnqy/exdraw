@@ -92,7 +92,7 @@ exdraw svg -f arch.excalidraw -o arch-dark.svg --theme dark --background-color "
 exdraw svg -f arch.excalidraw -o arch-embedded.svg --embed-scene --metadata "architecture"
 ```
 
-`svg` 还支持 `--no-background`、`--background-color`、`--theme light|dark`、`--embed-scene`、`--metadata` 和 `--padding`；也接受对应的 `--export-*` / `--view-background-color` 参数名。
+`svg` 默认使用 dark 风格；传入 `--theme light` 可覆盖。另支持 `--no-background`、`--background-color`、`--embed-scene`、`--metadata` 和 `--padding`，也接受对应的 `--export-*` / `--view-background-color` 参数名。
 
 ```bash
 node bin/exdraw.js rect --help

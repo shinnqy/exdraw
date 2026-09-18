@@ -113,7 +113,7 @@ export async function exportSceneToSvg(scene, options = {}) {
   const appState = {
     ...(scene.appState ?? {}),
     exportBackground: options.exportBackground ?? scene.appState?.exportBackground ?? true,
-    exportWithDarkMode: options.exportWithDarkMode ?? scene.appState?.exportWithDarkMode ?? false,
+    exportWithDarkMode: options.exportWithDarkMode ?? scene.appState?.exportWithDarkMode ?? true,
     exportEmbedScene: options.exportEmbedScene ?? scene.appState?.exportEmbedScene ?? false,
     viewBackgroundColor: options.viewBackgroundColor
       ?? scene.appState?.viewBackgroundColor

@@ -173,6 +173,19 @@ describe("CLI 绘图命令", () => {
     assert.match(svg, /svg-source:excalidraw/);
   });
 
+  test("svg 默认使用 dark 风格，显式 light 可覆盖", async () => {
+    const file = await tmpFile();
+    const darkOutput = file.replace(/\.excalidraw$/, ".default-dark.svg");
+    const lightOutput = file.replace(/\.excalidraw$/, ".explicit-light.svg");
+    const io = captureIo();
+    await runCli(["rect", "-f", file, "--x", "10", "--y", "20", "--width", "120", "--height", "60"], io);
+    await runCli(["svg", "-f", file, "-o", darkOutput], io);
+    await runCli(["svg", "-f", file, "-o", lightOutput, "--theme", "light"], io);
+    const darkSvg = await readFile(darkOutput, "utf8");
+    const lightSvg = await readFile(lightOutput, "utf8");
+    assert.notEqual(darkSvg, lightSvg);
+  });
+
   test("svg 导出支持官方背景、暗色、嵌入和 metadata 参数", async () => {
     const file = await tmpFile();
     const lightOutput = file.replace(/\.excalidraw$/, ".light.svg");
