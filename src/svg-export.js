@@ -98,16 +98,26 @@ async function getExportToSvg() {
 
 /**
  * @param {{ elements: object[], appState?: object, files?: object }} scene
- * @param {{ padding?: number }} [options]
+ * @param {{
+ *   padding?: number,
+ *   exportBackground?: boolean,
+ *   exportWithDarkMode?: boolean,
+ *   exportEmbedScene?: boolean,
+ *   viewBackgroundColor?: string,
+ *   metadata?: string,
+ * }} [options]
  * @returns {Promise<string>}
  */
 export async function exportSceneToSvg(scene, options = {}) {
   const exportToSvg = await getExportToSvg();
   const appState = {
     ...(scene.appState ?? {}),
-    exportBackground: scene.appState?.exportBackground ?? true,
-    exportWithDarkMode: scene.appState?.exportWithDarkMode ?? false,
-    exportEmbedScene: scene.appState?.exportEmbedScene ?? false,
+    exportBackground: options.exportBackground ?? scene.appState?.exportBackground ?? true,
+    exportWithDarkMode: options.exportWithDarkMode ?? scene.appState?.exportWithDarkMode ?? false,
+    exportEmbedScene: options.exportEmbedScene ?? scene.appState?.exportEmbedScene ?? false,
+    viewBackgroundColor: options.viewBackgroundColor
+      ?? scene.appState?.viewBackgroundColor
+      ?? "#ffffff",
   };
 
   const svg = await exportToSvg({
@@ -126,6 +136,13 @@ export async function exportSceneToSvg(scene, options = {}) {
 
   if (!svg || typeof svg.outerHTML !== "string") {
     throw new Error("官方 SVG 导出器没有返回 SVGElement");
+  }
+
+  if (options.metadata != null) {
+    const metadata = svg.querySelector?.("metadata");
+    if (metadata) {
+      metadata.appendChild(svg.ownerDocument.createTextNode(String(options.metadata)));
+    }
   }
   return svg.outerHTML;
 }

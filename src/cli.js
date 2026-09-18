@@ -620,6 +620,11 @@ const COMMANDS = {
       P("-f, --file <path>", "输入的 .excalidraw 文件", true),
       P("-o, --output <path>", "输出的 .svg 文件"),
       P("--padding <n>", "SVG 外边距，默认 10"),
+      P("--theme <s>", "light | dark"),
+      P("--background / --no-background", "是否导出背景，默认是"),
+      P("--background-color <c>", "导出背景颜色"),
+      P("--embed-scene / --no-embed-scene", "是否把场景数据嵌入 SVG"),
+      P("--metadata <s>", "追加到 SVG metadata 的文本"),
     ],
   },
 };
@@ -668,6 +673,15 @@ function resolveArrowhead(value) {
     throw new CliError(`未知箭头头部 "${value}"`);
   }
   return ARROWHEAD[key] ?? key;
+}
+
+function parseOptionalBoolean(value, flagName) {
+  if (value === undefined) return undefined;
+  try {
+    return coerce(value, "boolean");
+  } catch (err) {
+    throw new CliError(`${flagName} ${err.message}`);
+  }
 }
 
 function pickFile(flags, positionals, { required, positionalOk, cwd }) {
@@ -1086,7 +1100,7 @@ async function cmdValidate(file, strict, io) {
   }
 }
 
-async function cmdSvg(inputPath, outputPath, padding, io) {
+async function cmdSvg(inputPath, outputPath, options, io) {
   const raw = await readFile(inputPath, "utf8");
   let data;
   try {
@@ -1097,7 +1111,7 @@ async function cmdSvg(inputPath, outputPath, padding, io) {
 
   let svg;
   try {
-    svg = await exportSceneToSvg(data, { padding });
+    svg = await exportSceneToSvg(data, options);
   } catch (err) {
     throw new CliError(`SVG 导出失败: ${err.message}`);
   }
@@ -1320,14 +1334,43 @@ export async function runCli(argv, options = {}) {
     const input = flags.file ?? positionals[0];
     if (!input) throw new CliError("请用 -f <input.excalidraw> 指定输入文件");
     const output = flags.output ?? positionals[1];
-    let padding = 10;
-    if (flags.padding != null) {
-      padding = Number(flags.padding);
-      if (!Number.isFinite(padding) || padding < 0) {
-        throw new CliError("--padding 必须是大于等于 0 的数字");
-      }
+    const paddingValue = flags.padding ?? flags.exportPadding;
+    const padding = paddingValue == null ? 10 : Number(paddingValue);
+    if (!Number.isFinite(padding) || padding < 0) {
+      throw new CliError("--padding 必须是大于等于 0 的数字");
     }
-    await cmdSvg(resolve(io.cwd, input), output ? resolve(io.cwd, output) : null, padding, io);
+
+    const theme = flags.theme == null ? null : String(flags.theme).toLowerCase();
+    if (theme != null && !["light", "dark"].includes(theme)) {
+      throw new CliError("--theme 只能是 light 或 dark");
+    }
+    const exportBackground = parseOptionalBoolean(
+      flags.background ?? flags.exportBackground,
+      "--background"
+    );
+    const exportEmbedScene = parseOptionalBoolean(
+      flags.embedScene ?? flags.exportEmbedScene,
+      "--embed-scene"
+    );
+    const exportWithDarkMode = parseOptionalBoolean(
+      flags.exportWithDarkMode,
+      "--export-with-dark-mode"
+    );
+    const viewBackgroundColor = flags.backgroundColor ?? flags.viewBackgroundColor;
+
+    await cmdSvg(
+      resolve(io.cwd, input),
+      output ? resolve(io.cwd, output) : null,
+      {
+        padding,
+        exportBackground,
+        exportWithDarkMode: theme == null ? exportWithDarkMode : theme === "dark",
+        exportEmbedScene,
+        viewBackgroundColor,
+        metadata: flags.metadata,
+      },
+      io
+    );
     return;
   }
 

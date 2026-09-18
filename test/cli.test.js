@@ -172,4 +172,32 @@ describe("CLI 绘图命令", () => {
     assert.match(svg, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
     assert.match(svg, /svg-source:excalidraw/);
   });
+
+  test("svg 导出支持官方背景、暗色、嵌入和 metadata 参数", async () => {
+    const file = await tmpFile();
+    const lightOutput = file.replace(/\.excalidraw$/, ".light.svg");
+    const darkOutput = file.replace(/\.excalidraw$/, ".dark.svg");
+    const io = captureIo();
+    await runCli(["rect", "-f", file, "--x", "10", "--y", "20", "--width", "120", "--height", "60"], io);
+    await runCli([
+      "svg", "-f", file, "-o", lightOutput,
+      "--theme", "light",
+      "--background",
+      "--background-color", "#112233",
+    ], io);
+    await runCli([
+      "svg", "-f", file, "-o", darkOutput,
+      "--theme", "dark",
+      "--background",
+      "--background-color", "#112233",
+      "--embed-scene",
+      "--metadata", "cli-test",
+    ], io);
+    const lightSvg = await readFile(lightOutput, "utf8");
+    const darkSvg = await readFile(darkOutput, "utf8");
+    assert.match(lightSvg, /#112233/);
+    assert.match(darkSvg, /payload-type:application\/vnd\.excalidraw\+json/);
+    assert.match(darkSvg, /cli-test/);
+    assert.notEqual(darkSvg, lightSvg);
+  });
 });
